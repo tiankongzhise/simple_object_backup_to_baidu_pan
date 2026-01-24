@@ -26,7 +26,7 @@ class DbService:
             "echo": self.config.echo,
             "pool_pre_ping": self.config.pool_pre_ping,
         }
-        return create_engine(f"mysql://{user}:{password}@{host}:{port}/{database}", **engine_params)
+        return create_engine(f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}", **engine_params)
 
 
     def get_engine(self):
