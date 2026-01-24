@@ -1,4 +1,4 @@
-from simole_object_backup_to_pan_baidu.db_service import DbService
+from src.simple_object_backup_to_pan_baidu.db_service import DbService
 
 
 if __name__ == "__main__":
