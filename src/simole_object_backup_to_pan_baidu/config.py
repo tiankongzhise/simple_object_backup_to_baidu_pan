@@ -1,0 +1,139 @@
+from pathlib import Path
+from typing import TypeVar
+from pydantic import BaseModel,Field
+class ConfigServiceError(Exception):
+    """Config service error"""
+class ConfigInitError(ConfigServiceError):
+    """Config init error"""
+class ConfigValueError(ConfigServiceError):
+    """Config value error"""
+class ConfigRuntimeError(ConfigServiceError):
+    """Config runtime error"""
+
+
+def _load_toml(toml_path:str):
+    import tomllib
+    from copy import deepcopy
+    if toml_path is None:
+        print('用户未自定义配置，使用默认配置')
+        return None
+    temp_path = Path(toml_path)
+    if not temp_path.exists():
+        print(f'用户自定义配置文件{temp_path.resolve().as_posix()}不存在，使用默认配置')
+        return None
+    print(f'发现用户自定义配置文件，正在加载配置文件: {toml_path}')
+    with open(toml_path, "rb") as f:
+        toml_data = tomllib.load(f)
+    result = deepcopy(toml_data)
+    for key,value in toml_data.items():
+        if key not in Config.model_fields:
+            raise ConfigInitError(f"Config key {key} not defined")
+        if key == 'chunk_size_bytes':
+            if isinstance(value, str):
+                result[key] = eval(value, {'__builtins__': None}, {})
+                continue
+        if isinstance(value, str):
+            if value == 'true':
+                result[key] = True
+                continue
+            if value == 'false':
+                result[key] = False
+                continue
+            if value.lower() == 'none':
+                if key != 'password':
+                    raise ConfigInitError(f"Config value can not be None except password, {key} is None,is not expected")
+                result[key] = None
+                continue
+        result[key] = value
+    print('配置文件加载完成,等待校验...')
+    return result
+
+def _load_env(sql_env_path:str, upload_env_path:str,*args,**kwargs):
+    from dotenv import load_dotenv
+    if not Path(sql_env_path).exists():
+        raise ConfigInitError(f"SQL env file does not exist: {sql_env_path}")
+    if not Path(upload_env_path).exists():
+        raise ConfigInitError(f"Upload env file does not exist: {upload_env_path}")
+    load_dotenv(sql_env_path)
+    load_dotenv(upload_env_path)
+    for arg_env in args:
+        print(f'正在加载环境变量: {arg_env}')
+        if not Path(arg_env).exists():
+            raise ConfigInitError(f"Env file does not exist: {arg_env}")
+        load_dotenv(arg_env)
+    for kwarg_env,kwargs_env_path in kwargs.items():
+        print(f'正在加载环境变量: {kwarg_env}')
+        if not Path(kwargs_env_path).exists():
+            raise ConfigInitError(f"Env file does not exist: {kwargs_env_path}")
+        load_dotenv(kwargs_env_path)
+    print('所有环境变量加载完成')
+class Config(BaseModel):
+
+    # 数据库配置项
+    pool_size: int = Field(default=5, description="连接池大小") # 连接池大小
+    max_overflow: int = Field(default=10, description="最大溢出连接数") # 最大溢出连接数
+    pool_timeout: int = Field(default=30, description="连接超时时间（秒）") # 连接超时时间（秒）
+    pool_recycle: int = Field(default=3600, description="连接回收时间（秒），0表示不回收") # 连接回收时间（秒），0表示不回收
+    echo: bool = Field(default=False, description="是否打印SQL语句（仅调试时使用）") # 是否打印SQL语句（仅调试时使用）
+    pool_pre_ping: bool = Field(default=True, description="避免数据库连接不稳定带来的失败") # 避免数据库连接不稳定带来的失败
+
+    # scanf 配置项
+    source_path_list: list[str]|None = Field(default=None, description="源路径列表") # 源路径列表
+    zipped_suffix: list[str] = Field(default=[
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar.gz",
+        ".gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tgz",
+        ".tar",
+        ".bz2",
+    ], description="压缩文件后缀列表") # 压缩文件后缀列表
+
+    # 文件压缩 配置项
+    compress_temp_dir: str = Field(default='./temp_compress', description="备份临时目录") # 备份临时目录
+    password: str|None = Field(default=None, description="压缩密码") # 压缩密码
+    compress_level: int = Field(default=0, description="压缩格式") # 压缩格式
+    extract_temp_dir: str = Field(default='./temp_extract', description="解压临时目录") # 解压临时目录
+    salt:dict[int, bytes] = Field(default={
+        8: b"\xaa%\xec\xec[\x94\xbex",
+        12: b"}y\xd5\x19A\xa2\xf6\x1b\xce\x86\x7f\x85",
+        16: b"\xd1\x12_\xd7\xd7\n\x92\xfdC\x84\re\xcdxD\x0b",
+    }, description="压缩使用定制化盐值,但是固定,不会随机生成,使得压缩后文件hash稳定")
+
+    # 文件上传配置
+    chunk_size_bytes: int = Field(default=20*1024*1024, description="分片大小（字节）") # 分片大小（字节）
+    retry_times: int = Field(default=5, description="上传失败重试次数") # 上传失败重试次数
+
+    # 环境变量位置
+    db_env_path: str = Field(default='mysql.env', description="数据库环境变量文件路径") # 数据库环境变量文件路径
+    upload_env_path: str = Field(default='baidupan.env', description="上传环境变量文件路径") # 上传环境变量文件路径
+
+    # 用户定制化配置文件路径
+    toml_path: str = Field(default='config.toml', description="用户定制化配置文件路径") # 用户定制化配置文件路径
+
+
+
+
+__config_instance: Config = None # type: ignore
+
+def get_config():
+
+    global __config_instance
+    if __config_instance is None:
+        temp_config = Config()
+        config_data = _load_toml(temp_config.toml_path)
+        if config_data:
+            __config_instance = Config(**config_data)
+        else:
+            __config_instance = temp_config
+        _load_env(temp_config.db_env_path, temp_config.upload_env_path)
+    return __config_instance
+
+if __name__ == "__main__":
+    config = get_config()
+    print(config.pool_size)
+    # print(hasattr(Config, 'source_path_list'))
+

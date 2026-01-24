@@ -1,0 +1,34 @@
+    # 数据库配置项
+    pool_size = 5 # 连接池大小
+    max_overflow = 10 # 最大溢出连接数
+    pool_timeout = 30 # 连接超时时间（秒）
+    pool_recycle = 3600 # 连接回收时间（秒），0表示不回收
+    echo = false # 是否打印SQL语句（仅调试时使用）
+    pool_pre_ping = true # 避免数据库连接不稳定带来的失败
+
+    # scanf 配置项
+    source_path_list = [""] # 源路径列表
+    
+    zipped_suffix = [
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar.gz",
+        ".gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tgz",
+        ".tar",
+        ".bz2",
+    ] # 压缩文件后缀列表
+
+    # 文件压缩 配置项
+    compress_temp_dir = './temp_compress' # 备份临时目录
+    password = 'None' # 压缩密码
+    compress_level = 0 # 压缩格式
+    extract_temp_dir = './temp_extract' # 解压临时目录
+
+
+    # 文件上传配置
+    chunk_size_bytes = '20*1024*1024' # 分片大小（字节）
+    retry_times = 5 # 上传失败重试次数
