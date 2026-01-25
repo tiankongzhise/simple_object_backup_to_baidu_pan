@@ -1,5 +1,4 @@
-from src.simple_object_backup_to_pan_baidu.logger import get_logger, stop_logger
-
+from src.simple_object_backup_to_pan_baidu.logger import get_logger, shutdown_logger_service
 
 
 if __name__ == '__main__':
@@ -19,4 +18,12 @@ if __name__ == '__main__':
     logger2.error("This is an error message")
     logger3.error("This is an error message")
 
-    stop_logger()
+    logger1.stop()
+    logger2.stop()
+    logger3.stop()
+
+    logger1.info("This is an info message after stop logger1")
+    logger2.info("This is an info message after stop logger2")
+    logger3.info("This is an info message after stop logger3")
+
+    shutdown_logger_service()

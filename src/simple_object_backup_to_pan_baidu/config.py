@@ -239,16 +239,12 @@ class Config(BaseModel):
                 'level': 'DEBUG',
                 'propagate': False,
             },
-            '': {
+        },
+        'root': {
                 'handlers': ['console_service','time_rotate_service','errors','debug_only_console','debug_only_file'],
                 'level': 'DEBUG',
                 'propagate': False,
-            }
-        },
-        'root': {
-            'level': 'DEBUG',
-            'handlers':  ['console_main','time_rotate_main','errors','debug_only_console']
-        },
+            },
     }, description="日志配置") # 日志配置
 
 
