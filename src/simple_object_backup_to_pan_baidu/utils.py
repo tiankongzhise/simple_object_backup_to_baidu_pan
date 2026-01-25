@@ -42,16 +42,6 @@ from sqlalchemy import MetaData, String, BigInteger, UniqueConstraint
 from datetime import datetime
 from time import time_ns
 
-class StatusFinishedBase(DeclarativeBase):
-    metadata = MetaData()
-
-class StatusFinishedTable(StatusFinishedBase):
-    __tablename__ = "status_finished"
-    status_name: Mapped[str] = mapped_column(String(30))
-    is_finished: Mapped[bool] = mapped_column(default=False, nullable=False)
-
-    __table_args__ = (UniqueConstraint('status_name', name='uix_status_name'),)
-
 
 class DbMixin(DeclarativeBase):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -68,3 +58,16 @@ class DbMixin(DeclarativeBase):
     def updated_at_localtime(self):
         local_time_sec = self.updated_at / 1_000_000_000.0
         return datetime.fromtimestamp(local_time_sec)
+
+class StatusFinishedBase(DeclarativeBase):
+    metadata = MetaData()
+
+
+
+class StatusFinishedTable(DbMixin,StatusFinishedBase):
+    __tablename__ = "status_finished"
+    status_name: Mapped[str] = mapped_column(String(30))
+    is_finished: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    __table_args__ = (UniqueConstraint('status_name', name='uix_status_name'),)
+

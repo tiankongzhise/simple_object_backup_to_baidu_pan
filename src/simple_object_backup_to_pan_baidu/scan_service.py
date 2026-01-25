@@ -6,6 +6,11 @@ from sqlalchemy import exc
 from time import time_ns
 from datetime import datetime
 import os
+import platform
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Literal, Sequence
+
+from .logger import get_logger
 
 from .db_service import DbService
 from .utils import retry_decorator,DbMixin,StatusFinishedTable
@@ -35,6 +40,7 @@ class ScanResult(BaseModel):
     host_name: str
     object_path: Path
     object_name: str
+    object_type: Literal["file", "directory"]
     object_size: int
     object_item_count: int
     object_items:dict[str,int]
@@ -45,8 +51,9 @@ class ScanBase(DeclarativeBase):
 class ScanTable(DbMixin,ScanBase):
     __tablename__ = "scan_results"
     host_name: Mapped[str] = mapped_column(String(255))
-    object_name: Mapped[str] = mapped_column(String(255))
     object_path: Mapped[str] = mapped_column(String(255))
+    object_name: Mapped[str] = mapped_column(String(255))
+    object_type: Mapped[str] = mapped_column(String(15))
     object_size: Mapped[int] = mapped_column(BigInteger)
     object_item_count: Mapped[int] = mapped_column(Integer)
     object_items: Mapped[dict] = mapped_column(JSON)
@@ -55,18 +62,22 @@ class ScanTable(DbMixin,ScanBase):
 
 
 class ScanService:
-    def __init__(self,source_object_paths:list[Path|str],db_engine:Engine|None = None):
+    def __init__(self,source_object_paths:Sequence[Path|str],db_engine:Engine|None = None):
+        self.logger = get_logger(__name__)
+        self.logger.debug("Scan service initializing...")
         self.source_object_paths = [Path(path) for path in source_object_paths]
         self.db_engine = db_engine or DbService().get_engine()
-        self._current_object_path:Path = None  # type: ignore
+        self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ScanServiceThread_")
+        self._host_name = platform.node()  # 跨平台获取主机名
+        self.logger.debug(f"Scan service init finished. Host name: {self._host_name}")
 
-
-    def scan_file(self,file_path:Path):
-        items_path = file_path.relative_to(self._current_object_path.parent).as_posix()
+    def scan_file(self,file_path:Path, relative_path:Path):
+        items_path = file_path.relative_to(relative_path).as_posix()
         return ScanResult(
-        host_name=os.uname().nodename,
+        host_name=self._host_name,
         object_path=file_path,
         object_name=file_path.name,
+        object_type="file",
         object_size=file_path.stat().st_size,
         object_item_count=1,
         object_items={items_path:file_path.stat().st_size}
@@ -74,20 +85,21 @@ class ScanService:
 
 
 
-    def scan_directory(self,directory_path:Path):
+    def scan_directory(self,directory_path:Path, relative_path:Path):
         object_item_count = 0
         object_items = {}
         object_size = 0
         for item in directory_path.rglob("*"):
             if item.is_file():
-                item_path = item.relative_to(self._current_object_path.parent).as_posix()
+                item_path = item.relative_to(relative_path).as_posix()
                 object_item_count += 1
                 object_items[item_path] = item.stat().st_size
                 object_size += item.stat().st_size
         return ScanResult(
-        host_name=os.uname().nodename,
+        host_name=self._host_name,
         object_path=directory_path,
         object_name=directory_path.name,
+        object_type="directory",
         object_size=object_size,
         object_item_count=object_item_count,
         object_items=object_items
@@ -98,13 +110,14 @@ class ScanService:
             raise ScanServiceValueError(f"Object path does not exist: {object_path}")
         self._current_object_path = object_path
         if object_path.is_file():
-            return self.scan_file(object_path)
+            return self.scan_file(object_path, relative_path=object_path.parent)
         if object_path.is_dir():
-            return self.scan_directory(object_path)
+            return self.scan_directory(object_path, relative_path=object_path.parent)
         raise ScanServiceError(f"Invalid object path: {object_path}")
     
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def create_scan_table(self):
+        self.logger.debug("Creating scan table...")
         """Create the scan table in the database"""
         try:
             ScanTable.metadata.create_all(self.db_engine)
@@ -112,24 +125,30 @@ class ScanService:
             raise ScanDbOperationalError(f"Error creating scan table: {e}") from e
         except Exception as e:
             raise ScanDbError(f"Error creating scan table: {e}") from e
+        self.logger.debug("Scan table created.")
     
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def drop_scan_table(self):
         """Drop the scan table from the database"""
+        self.logger.debug("Dropping scan table...")
         try:
             ScanTable.metadata.drop_all(self.db_engine)
         except exc.OperationalError as e:
             raise ScanDbOperationalError(f"Error dropping scan table: {e}") from e
         except Exception as e:
             raise ScanDbError(f"Error dropping scan table: {e}") from e
+        self.logger.debug("Scan table dropped.")
     
     def reset_scan_table(self):
         """Reset the scan table by dropping and recreating it"""
+        self.logger.debug("Resetting scan table...")
         self.drop_scan_table()
         self.create_scan_table()
+        self.logger.debug("Scan table reset.")
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def query_scan_table(self,scan_results: ScanResult):
+        self.logger.debug(f"Querying scan table..., host_name: {scan_results.host_name}, object_path: {scan_results.object_path}")
         """Query the scan table for a given host name and object path"""
         try:
             with Session(self.db_engine) as session:
@@ -138,9 +157,11 @@ class ScanService:
             raise ScanDbOperationalError(f"Error querying scan table: {e}") from e
         except Exception as e:
             raise ScanDbError(f"Error querying scan table: {e}") from e
+        self.logger.debug("Scan table queried.")
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def save_scan_result(self, scan_results: ScanResult):
+        self.logger.debug(f"Saving scan result..., host_name: {scan_results.host_name}, object_path: {scan_results.object_path}")
         with Session(self.db_engine) as session:
             query_result = self.query_scan_table(scan_results)
             if query_result is None:
@@ -149,24 +170,90 @@ class ScanService:
                     session.commit()
                 except exc.OperationalError as e:
                     session.rollback()
+                    self.logger.error("Scan result insert failed because of an operational error.")
                     raise ScanDbOperationalError(f"Error inserting scan result: {e}") from e
                 except exc.IntegrityError as e:
                     session.rollback()
+                    self.logger.error("Scan result insert failed because of an integrity error.")
                     raise ScanDbIntegrityError(f"Error inserting scan result: {e}") from e
                 except Exception as e:
                     session.rollback()
+                    self.logger.error(f"Scan result insert failed because of an error.{e}")
                     raise ScanDbError(f"Error inserting scan result: {e}") from e
             else:
                 for key, value in scan_results.model_dump().items():
                     if not hasattr(query_result, key):
+                        self.logger.error(f"scan_results  key: {key} not in scan table,check scan table schema")
                         raise ScanServiceKeyError(f"scan_results  key: {key} not in scan table,check scan table schema")
                     if value != getattr(query_result, key):
+                        self.logger.error(f"scan_results value: {value} not match scan table value: {getattr(query_result, key)} for key: {key}")
                         raise ScanServiceValueError(f"scan_results value: {value} not match scan table value: {getattr(query_result, key)} for key: {key}")
-
+        self.logger.debug("Scan result saved.")
+    
+    @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
+    def send_scan_service_finish_status(self):
+        """Send finish status to database"""
+        self.logger.debug("Sending scan service finish status...")
+        with Session(self.db_engine) as session:
+            try:
+                session.add(StatusFinishedTable(status_name="scan_service", is_finished=True))
+                session.commit()
+            except exc.OperationalError as e:
+                self.logger.error("Scan service finish status insert failed because of an operational error.")
+                raise ScanDbOperationalError(f"Error sending scan service finish status: {e}") from e
+            except exc.IntegrityError as e:
+                self.logger.error("Scan service finish status insert failed because of an integrity error.")
+                raise ScanDbIntegrityError(f"Error sending scan service finish status: {e}") from e
+            except Exception as e:
+                self.logger.error("Scan service finish status insert failed because of an error.")
+                raise ScanDbError(f"Error sending scan service finish status: {e}") from e
+        self.logger.debug("Scan service finish status sent.")
 
     def start(self):
         """Start the scan service"""
+        self.logger.info("Scan service starting...")
         self.create_scan_table()
-        for object_path in self.source_object_paths:
-            scan_result = self.scan_object(object_path)
-            self.save_scan_result(scan_result)
+        futures = []
+        total_object_paths = len(self.source_object_paths) if self.source_object_paths else 0
+        self.logger.info(f"Total object paths: {total_object_paths}")
+        with self._executor as executor:
+            for object_path in self.source_object_paths:
+                self.logger.debug(f"submitting object path: {object_path}")
+                if object_path.is_file():
+                    futures.append(executor.submit(self.scan_object, object_path))
+                    continue
+                if object_path.is_dir():
+                    items = list(object_path.iterdir())
+                    self.logger.info(f"Total {len(items)} items in directory: {object_path}")
+                    temp_scan_count = 0
+                    for object in items:
+                        futures.append(executor.submit(self.scan_object, object))
+                        temp_scan_count += 1
+                        self.logger.info(f"submitting {object_path}: {object},submitted {temp_scan_count} items ,submitperse {temp_scan_count/len(items)*100:.2f}%")
+            
+            all_items = len(futures)
+            finished_items = 0
+            self.logger.info(f"Scan result received, total: {all_items}")
+            for result in as_completed(futures):
+                try:
+                    self.logger.debug(f"Scan result received, finished: {finished_items}/{all_items}")
+                    self.save_scan_result(result.result())
+                    self.logger.info(f"Scan result saved, finished: {finished_items}/{all_items}")
+                except Exception as e:
+                    self.logger.error(f"Scan Service Error: {e}", exc_info=True)
+                    executor.shutdown(wait=False)
+                    raise ScanServiceError(f"Error saving scan result: {e}") from e
+            
+            try:
+                self.send_scan_service_finish_status()
+            except Exception as e:
+                self.logger.error(f"Scan Service Error: {e}", exc_info=True)
+                executor.shutdown(wait=False)
+                raise ScanServiceError(f"Error sending scan service finish status: {e}") from e
+            
+    def stop(self):
+        """Stop the scan service"""
+        self.logger.info("Scan service stopping...")
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
+        self.logger.info("Scan service stopped.")

@@ -85,7 +85,7 @@ class Config(BaseModel):
     pool_pre_ping: bool = Field(default=True, description="避免数据库连接不稳定带来的失败") # 避免数据库连接不稳定带来的失败
 
     # scanf 配置项
-    source_path_list: list[str]|None = Field(default=None, description="源路径列表") # 源路径列表
+    source_path_list: list[str] = Field(default=[], description="源路径列表") # 源路径列表
     zipped_suffix: list[str] = Field(default=[
         ".zip",
         ".rar",

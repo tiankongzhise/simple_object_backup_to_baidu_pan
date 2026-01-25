@@ -9,7 +9,16 @@ class DbEngineConnectionError(DbServiceError):
     """DbEngine 连接错误类"""
 
 class DbService:
+    _instance = None
+    is_initialized = False
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, config: Config|None = None):
+        if self.is_initialized:
+            return
         self.config = config or get_config()
     
     def create_engine(self):

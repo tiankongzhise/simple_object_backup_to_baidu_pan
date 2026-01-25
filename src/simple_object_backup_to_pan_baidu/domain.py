@@ -2,6 +2,14 @@ from abc import ABC, abstractmethod
 from typing import List, Set,Literal
 from concurrent.futures import Future, ThreadPoolExecutor,ProcessPoolExecutor
 import threading
+import time
+
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+
+
 
 class BaseService(ABC):
     """服务基类"""
