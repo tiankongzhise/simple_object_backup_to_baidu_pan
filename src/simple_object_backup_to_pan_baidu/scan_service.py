@@ -1,13 +1,33 @@
 from pathlib import Path
 from pydantic import BaseModel
 from sqlalchemy.orm import DeclarativeBase, mapped_column,Mapped, Session
-from sqlalchemy import Engine,BigInteger, String, Integer,UniqueConstraint,MetaData, JSON, update, Boolean
+from sqlalchemy import Engine,BigInteger, String, Integer,UniqueConstraint,MetaData, JSON, Boolean
+from sqlalchemy import exc
 from time import time_ns
 from datetime import datetime
 import os
-from .db_service import get_engine
 
-from sqlalchemy.orm.decl_api import interfaces
+from .db_service import DbService
+from .utils import retry_decorator,DbMixin,StatusFinishedTable
+
+class ScanServiceError(Exception):
+    """Base class for scan service errors"""
+
+
+class ScanServiceKeyError(ScanServiceError):
+    """Error raised when a key is not found in the scan service schema"""
+
+class ScanServiceValueError(ScanServiceError):
+    """Error raised when a value is not valid for the scan service"""
+
+class ScanDbError(ScanServiceError):
+    """Base class for scan database errors"""
+
+class ScanDbIntegrityError(ScanServiceError):
+    """Error raised when there is an integrity error inserting a scan result"""
+
+class ScanDbOperationalError(ScanServiceError):
+    """Error raised when there is an error inserting a scan result"""
 
 
 class ScanResult(BaseModel):
@@ -22,22 +42,7 @@ class ScanResult(BaseModel):
 class ScanBase(DeclarativeBase):
     metadata = MetaData()
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-
-    created_at: Mapped[int] = mapped_column(BigInteger, default=time_ns)
-    updated_at: Mapped[int] = mapped_column(BigInteger, onupdate=time_ns,nullable=True)
-
-    @property
-    def created_at_localtime(self):
-        local_time_sec = self.created_at / 1_000_000_000.0
-        return datetime.fromtimestamp(local_time_sec)
-
-    @property
-    def updated_at_localtime(self):
-        local_time_sec = self.updated_at / 1_000_000_000.0
-        return datetime.fromtimestamp(local_time_sec)
-
-class ScanTable(ScanBase):
+class ScanTable(DbMixin,ScanBase):
     __tablename__ = "scan_results"
     host_name: Mapped[str] = mapped_column(String(255))
     object_name: Mapped[str] = mapped_column(String(255))
@@ -50,10 +55,10 @@ class ScanTable(ScanBase):
 
 
 class ScanService:
-    def __init__(self,source_object_paths:list[Path|str],db_engine:Engine):
+    def __init__(self,source_object_paths:list[Path|str],db_engine:Engine|None = None):
         self.source_object_paths = [Path(path) for path in source_object_paths]
-        self.db_engine = db_engine
-        self._current_object_path:Path = None
+        self.db_engine = db_engine or DbService().get_engine()
+        self._current_object_path:Path = None  # type: ignore
 
 
     def scan_file(self,file_path:Path):
@@ -90,33 +95,78 @@ class ScanService:
 
     def scan_object(self,object_path:Path):
         if not object_path.exists():
-            raise ValueError(f"Object path does not exist: {object_path}")
+            raise ScanServiceValueError(f"Object path does not exist: {object_path}")
         self._current_object_path = object_path
         if object_path.is_file():
             return self.scan_file(object_path)
         if object_path.is_dir():
             return self.scan_directory(object_path)
-        raise ValueError(f"Invalid object path: {object_path}")
+        raise ScanServiceError(f"Invalid object path: {object_path}")
     
+    @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def create_scan_table(self):
-        ScanTable.metadata.create_all(self.db_engine)
+        """Create the scan table in the database"""
+        try:
+            ScanTable.metadata.create_all(self.db_engine)
+        except exc.OperationalError as e:
+            raise ScanDbOperationalError(f"Error creating scan table: {e}") from e
+        except Exception as e:
+            raise ScanDbError(f"Error creating scan table: {e}") from e
+    
+    @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def drop_scan_table(self):
-        ScanTable.metadata.drop_all(self.db_engine)
+        """Drop the scan table from the database"""
+        try:
+            ScanTable.metadata.drop_all(self.db_engine)
+        except exc.OperationalError as e:
+            raise ScanDbOperationalError(f"Error dropping scan table: {e}") from e
+        except Exception as e:
+            raise ScanDbError(f"Error dropping scan table: {e}") from e
+    
     def reset_scan_table(self):
+        """Reset the scan table by dropping and recreating it"""
         self.drop_scan_table()
         self.create_scan_table()
 
+    @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
+    def query_scan_table(self,scan_results: ScanResult):
+        """Query the scan table for a given host name and object path"""
+        try:
+            with Session(self.db_engine) as session:
+                return session.query(ScanTable).filter(ScanTable.host_name == scan_results.host_name, ScanTable.object_path == scan_results.object_path).scalar()
+        except exc.OperationalError as e:
+            raise ScanDbOperationalError(f"Error querying scan table: {e}") from e
+        except Exception as e:
+            raise ScanDbError(f"Error querying scan table: {e}") from e
+
+    @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
     def save_scan_result(self, scan_results: ScanResult):
         with Session(self.db_engine) as session:
-            query_result = session.query(ScanTable).filter(ScanTable.host_name == scan_results.host_name, ScanTable.object_path == scan_results.object_path).scalar()
+            query_result = self.query_scan_table(scan_results)
             if query_result is None:
-                session.add(ScanTable(**scan_results.model_dump()))
-                session.commit()
+                try:
+                    session.add(ScanTable(**scan_results.model_dump()))
+                    session.commit()
+                except exc.OperationalError as e:
+                    session.rollback()
+                    raise ScanDbOperationalError(f"Error inserting scan result: {e}") from e
+                except exc.IntegrityError as e:
+                    session.rollback()
+                    raise ScanDbIntegrityError(f"Error inserting scan result: {e}") from e
+                except Exception as e:
+                    session.rollback()
+                    raise ScanDbError(f"Error inserting scan result: {e}") from e
             else:
                 for key, value in scan_results.model_dump().items():
                     if not hasattr(query_result, key):
-                        raise KeyError(f"scan_results  key: {key} not in scan table,check scan table schema")
+                        raise ScanServiceKeyError(f"scan_results  key: {key} not in scan table,check scan table schema")
                     if value != getattr(query_result, key):
-                        raise ValueError(f"scan_results value: {value} not match scan table value: {getattr(query_result, key)} for key: {key}")
+                        raise ScanServiceValueError(f"scan_results value: {value} not match scan table value: {getattr(query_result, key)} for key: {key}")
 
 
+    def start(self):
+        """Start the scan service"""
+        self.create_scan_table()
+        for object_path in self.source_object_paths:
+            scan_result = self.scan_object(object_path)
+            self.save_scan_result(scan_result)
