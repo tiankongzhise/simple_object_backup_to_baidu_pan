@@ -92,12 +92,12 @@ class StatusFinishedBase(DeclarativeBase):
 
 
 
-class StatusFinishedTable(DbMixin,StatusFinishedBase):
-    __tablename__ = "status_finished"
-    status_name: Mapped[str] = mapped_column(String(30))
+class ServiceStatusTable(DbMixin,StatusFinishedBase):
+    __tablename__ = "service_status"
+    service_name: Mapped[str] = mapped_column(String(30))
     is_finished: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    __table_args__ = (UniqueConstraint('status_name', name='uix_status_name'),)
+    __table_args__ = (UniqueConstraint('service_name', name='uix_service_name'),)
 
 
 class ErrorBase(DeclarativeBase):
@@ -115,3 +115,8 @@ def update_error_table(engine,service_name:str, error_message:str):
     with Session(engine) as session:
         session.add(ErrorTable(service_name=service_name, error_message=error_message))
         session.commit()
+
+def reset_service_status_table(engine):
+    """Reset the service status table with the given service name."""
+    ServiceStatusTable.metadata.drop_all(bind=engine)
+    ServiceStatusTable.metadata.create_all(bind=engine)

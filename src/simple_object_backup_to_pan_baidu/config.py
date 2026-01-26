@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import TypeVar
-from pydantic import BaseModel,Field
+from pydantic import BaseModel, DirectoryPath,Field
 from multiprocessing import Manager
 from multiprocessing.queues import Queue
 import logging
@@ -100,6 +100,13 @@ class Config(BaseModel):
         ".tar",
         ".bz2",
     ], description="压缩文件后缀列表") # 压缩文件后缀列表
+
+    # hash计算 配置项
+    directory_overcount:int = 200
+    oversize:int = 20 * 1024 * 1024 # 20MB
+    hash_chunk_size_bytes: int = Field(default=500 * 1024 * 1024, description="哈希计算分片大小（字节）") # 哈希计算分片大小（字节）
+    algorithm_list: list[str] = Field(default=['md5', 'sha1', 'sha256'], description="哈希算法列表") # 哈希算法列表
+
 
     # 文件压缩 配置项
     compress_temp_dir: str = Field(default='./temp_compress', description="备份临时目录") # 备份临时目录

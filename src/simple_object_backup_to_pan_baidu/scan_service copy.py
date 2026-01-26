@@ -13,7 +13,7 @@ from typing import Literal, Sequence
 from .logger_backup import get_logger
 
 from .db_service import DbService
-from .utils import retry_decorator,DbMixin,StatusFinishedTable
+from .utils import retry_decorator,DbMixin,ServiceStatusTable
 
 class ScanServiceError(Exception):
     """Base class for scan service errors"""
@@ -197,7 +197,7 @@ class ScanService:
         self.logger.debug("Querying scan service finish status...")
         try:
             with Session(self.db_engine) as session:
-                return session.query(StatusFinishedTable).filter(StatusFinishedTable.status_name == "scan_service").scalar()
+                return session.query(ServiceStatusTable).filter(ServiceStatusTable.service_name == "scan_service").scalar()
         except exc.OperationalError as e:
             self.logger.error(f"Error querying scan service finish status: {e}")
             raise ScanDbOperationalError(f"Error querying scan service finish status: {e}") from e
@@ -210,7 +210,7 @@ class ScanService:
         self.logger.debug("Adding scan service finish status...")
         with Session(self.db_engine) as session:
             try:
-                session.add(StatusFinishedTable(status_name="scan_service", is_finished=False))
+                session.add(ServiceStatusTable(status_name="scan_service", is_finished=False))
                 session.commit()
             except exc.OperationalError as e:
                 self.logger.error("Scan service finish status insert failed because of an operational error.")

@@ -1,4 +1,4 @@
-from .config import get_config,Config
+from .config import get_config, Config
 from sqlalchemy import create_engine
 import os
 

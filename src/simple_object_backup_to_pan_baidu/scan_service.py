@@ -6,12 +6,13 @@ from sqlalchemy import exc
 from datetime import datetime
 import os
 import platform
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError, CancelledError
-from typing import Literal, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError, CancelledError, Future
+from typing import TYPE_CHECKING, Literal, Sequence, Optional
 import logging
 
-from .db_service import DbService
-from .utils import retry_decorator, DbMixin, StatusFinishedTable
+if TYPE_CHECKING:
+    from .db_service import DbService
+from .utils import retry_decorator, DbMixin, ServiceStatusTable
 
 
 class ScanServiceError(Exception):
@@ -69,9 +70,9 @@ class ScanTable(DbMixin, ScanBase):
 class Scanner:
     """Handles file and directory scanning operations"""
 
-    def __init__(self, host_name: str, logger: logging.Logger):
-        self._host_name = host_name
-        self._logger = logger
+    def __init__(self, host_name: str, logger: logging.Logger) -> None:
+        self._host_name: str = host_name
+        self._logger: logging.Logger = logger
 
     def scan_file(self, file_path: Path, relative_path: Path) -> ScanResult:
         """Scan a single file and return its scan result"""
@@ -128,12 +129,12 @@ class Scanner:
 class ScanRepository:
     """Handles database operations for scan results"""
 
-    def __init__(self, db_engine: Engine, logger: logging.Logger):
-        self._db_engine = db_engine
-        self._logger = logger
+    def __init__(self, db_engine: Engine, logger: logging.Logger) -> None:
+        self._db_engine: Engine = db_engine
+        self._logger: logging.Logger = logger
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def create_table(self):
+    def create_table(self) -> None:
         """Create the scan table in the database"""
         self._logger.debug("Creating scan table...")
         try:
@@ -145,7 +146,7 @@ class ScanRepository:
         self._logger.debug("Scan table created.")
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def drop_table(self):
+    def drop_table(self) -> None:
         """Drop the scan table from the database"""
         self._logger.debug("Dropping scan table...")
         try:
@@ -156,7 +157,7 @@ class ScanRepository:
             raise ScanDbError(f"Error dropping scan table: {e}") from e
         self._logger.debug("Scan table dropped.")
 
-    def reset_table(self):
+    def reset_table(self) -> None:
         """Reset the scan table by dropping and recreating it"""
         self._logger.debug("Resetting scan table...")
         self.drop_table()
@@ -164,7 +165,7 @@ class ScanRepository:
         self._logger.debug("Scan table reset.")
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def query_scan_result(self, scan_result: ScanResult):
+    def query_scan_result(self, scan_result: ScanResult) -> Optional[ScanTable]:
         """Query the scan table for a given host name and object path"""
         self._logger.debug(f"Querying scan table..., host_name: {scan_result.host_name}, object_path: {scan_result.object_path}")
         try:
@@ -179,7 +180,7 @@ class ScanRepository:
             raise ScanDbError(f"Error querying scan table: {e}") from e
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def save_scan_result(self, scan_result: ScanResult):
+    def save_scan_result(self, scan_result: ScanResult) -> None:
         """Save a scan result to the database"""
         self._logger.debug(f"Saving scan result..., host_name: {scan_result.host_name}, object_path: {scan_result.object_path}")
         with Session(self._db_engine) as session:
@@ -216,17 +217,17 @@ class ScanRepository:
 class ScanStatusManager:
     """Manages scan service status in the database"""
 
-    def __init__(self, db_engine: Engine, logger: logging.Logger):
-        self._db_engine = db_engine
-        self._logger = logger
+    def __init__(self, db_engine: Engine, logger: logging.Logger) -> None:
+        self._db_engine: Engine = db_engine
+        self._logger: logging.Logger = logger
 
-    def query_finish_status(self):
+    def query_finish_status(self) -> Optional[ServiceStatusTable]:
         """Query the scan service finish status from database"""
         self._logger.debug("Querying scan service finish status...")
         try:
             with Session(self._db_engine) as session:
-                return session.query(StatusFinishedTable).filter(
-                    StatusFinishedTable.status_name == "scan_service"
+                return session.query(ServiceStatusTable).filter(
+                    ServiceStatusTable.service_name == "scan_service"
                 ).scalar()
         except exc.OperationalError as e:
             self._logger.error(f"Error querying scan service finish status: {e}")
@@ -236,12 +237,12 @@ class ScanStatusManager:
             raise ScanDbError(f"Error querying scan service finish status: {e}") from e
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def add_finish_status(self):
+    def add_finish_status(self) -> None:
         """Add scan service finish status to database"""
         self._logger.debug("Adding scan service finish status...")
         with Session(self._db_engine) as session:
             try:
-                session.add(StatusFinishedTable(status_name="scan_service", is_finished=False))
+                session.add(ServiceStatusTable(service_name="scan_service", is_finished=False))
                 session.commit()
             except exc.OperationalError as e:
                 self._logger.error("Scan service finish status insert failed because of an operational error.")
@@ -258,7 +259,7 @@ class ScanStatusManager:
         self._logger.debug("Scan service finish status sent.")
 
     @retry_decorator(retries=3, delay=1.0, backoff=2.0, exceptions=(ScanDbOperationalError,))
-    def change_finish_status(self, status: Literal[True, False]):
+    def change_finish_status(self, status: Literal[True, False]) -> None:
         """Change the scan service finish status in database"""
         self._logger.debug("Changing scan service finish status...")
         query_result = self.query_finish_status()
@@ -274,59 +275,69 @@ class ScanStatusManager:
 class ScanService:
     """Main service for scanning files and directories"""
 
-    def __init__(self, source_object_paths: Sequence[Path | str], db_engine: Engine | None = None):
-        self.logger = logging.getLogger(__name__)
+    def __init__(
+        self,
+        source_object_paths: Sequence[Path | str],
+        db_engine: Optional[Engine] = None,
+        max_workers: int = 3
+    ) -> None:
+        self.logger: logging.Logger = logging.getLogger(__name__)
         self.logger.debug("Scan service initializing...")
-        self.source_object_paths = [Path(path) for path in source_object_paths]
-        self.db_engine = db_engine or DbService().get_engine()
-        self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ScanServiceThread_")
-        self._host_name = platform.node()
-        self._scanner = Scanner(self._host_name, self.logger)
-        self._repository = ScanRepository(self.db_engine, self.logger)
-        self._status_manager = ScanStatusManager(self.db_engine, self.logger)
+        self.source_object_paths: list[Path] = [Path(path) for path in source_object_paths]
+        self.db_engine: Engine = db_engine if db_engine is not None else self._get_db_engine()
+        self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ScanServiceThread_")
+        self._host_name: str = platform.node()
+        self._scanner: Scanner = Scanner(self._host_name, self.logger)
+        self._repository: ScanRepository = ScanRepository(self.db_engine, self.logger)
+        self._status_manager: ScanStatusManager = ScanStatusManager(self.db_engine, self.logger)
         self.logger.debug(f"Scan service init finished. Host name: {self._host_name}")
+
+    def _get_db_engine(self) -> Engine:
+        """Get database engine from DbService"""
+        from .db_service import DbService
+        return DbService().get_engine()
 
     def scan_object(self, object_path: Path) -> ScanResult:
         """Scan an object and return the result"""
         return self._scanner.scan_object(object_path)
 
-    def create_scan_table(self):
+    def create_scan_table(self) -> None:
         """Create the scan table in the database"""
         self._repository.create_table()
 
-    def drop_scan_table(self):
+    def drop_scan_table(self) -> None:
         """Drop the scan table from the database"""
         self._repository.drop_table()
 
-    def reset_scan_table(self):
+    def reset_scan_table(self) -> None:
         """Reset the scan table by dropping and recreating it"""
         self._repository.reset_table()
 
-    def query_scan_table(self, scan_results: ScanResult):
+    def query_scan_table(self, scan_results: ScanResult) -> Optional[ScanTable]:
         """Query the scan table for a given scan result"""
         return self._repository.query_scan_result(scan_results)
 
-    def save_scan_result(self, scan_results: ScanResult):
+    def save_scan_result(self, scan_results: ScanResult) -> None:
         """Save a scan result to the database"""
         self._repository.save_scan_result(scan_results)
 
-    def query_scan_service_finish_status(self):
+    def query_scan_service_finish_status(self) -> Optional[ServiceStatusTable]:
         """Query the scan service finish status from database"""
         return self._status_manager.query_finish_status()
 
-    def add_scan_service_finish_status(self):
+    def add_scan_service_finish_status(self) -> None:
         """Add scan service finish status to database"""
         self._status_manager.add_finish_status()
 
-    def change_scan_service_finish_status(self, status: Literal[True, False]):
+    def change_scan_service_finish_status(self, status: Literal[True, False]) -> None:
         """Change the scan service finish status in database"""
         self._status_manager.change_finish_status(status)
 
-    def start(self):
+    def start(self) -> None:
         """Start the scan service"""
         self.logger.info("Scan service starting...")
         self.create_scan_table()
-        futures = []
+        futures: list[Future[ScanResult]] = []
         total_object_paths = len(self.source_object_paths) if self.source_object_paths else 0
         self.logger.info(f"Total object paths: {total_object_paths}")
         try:
@@ -370,7 +381,7 @@ class ScanService:
             self._executor.shutdown(wait=True)
             self.logger.info("Scan service stopped.")
 
-    def graceful_shutdown(self, futures):
+    def graceful_shutdown(self, futures: list[Future[ScanResult]]) -> None:
         """Gracefully shutdown the scan service"""
         self.logger.info("Scan service graceful shutdown starting...,stopping executor")
         self._executor.shutdown(wait=False)
@@ -392,7 +403,7 @@ class ScanService:
             os._exit(1)
         self.logger.info("Scan service graceful shutdown completed.")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the scan service"""
         self.logger.info("Scan service stopping...")
         os._exit(1)
