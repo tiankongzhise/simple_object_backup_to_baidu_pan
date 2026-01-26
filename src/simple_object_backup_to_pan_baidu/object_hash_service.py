@@ -14,6 +14,7 @@ from sqlalchemy import (
 from concurrent.futures import ProcessPoolExecutor
 from pydantic import BaseModel, Field
 import logging
+import queue
 from pathlib import Path
 import hashlib
 import platform
@@ -265,11 +266,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def create_table(self):
+    def create_table(self, engine: Engine | None = None):
         """Create table ObjectHashTable if not exists."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug("Create table ObjectHashTable if not exists")
         try:
-            ObjectHashTable.metadata.create_all(bind=self._db_engine)
+            ObjectHashTable.metadata.create_all(bind=db_engine)
         except exc.OperationalError as e:
             self._logger.error(f"Create table ObjectHashTable failed: {e}")
             raise ObjectHashDbOperationlError(
@@ -285,11 +287,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def drop_table(self):
+    def drop_table(self, engine: Engine | None = None):
         """Drop table ObjectHashTable if exists."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug("Drop table ObjectHashTable if exists")
         try:
-            ObjectHashTable.metadata.drop_all(bind=self._db_engine)
+            ObjectHashTable.metadata.drop_all(bind=db_engine)
         except exc.OperationalError as e:
             self._logger.error(f"Drop table ObjectHashTable failed: {e}")
             raise ObjectHashDbOperationlError(
@@ -312,11 +315,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_scan_record(self):
+    def query_scan_record(self, engine: Engine | None = None):
         """Query scan record by id."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug("Query scan record")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 scan_record = (
                     session.query(ScanTable)
                     .filter_by(status="waiting")
@@ -333,11 +337,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_scan_service_status(self):
+    def query_scan_service_status(self, engine: Engine | None = None):
         """Query scan service status."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug("Query scan service status")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 scan_service_status = (
                     session.query(ServiceStatusTable)
                     .filter_by(service_name="scan_service")
@@ -354,13 +359,14 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_hash_record_by_path(self, host_name: str, object_path: str):
+    def query_hash_record_by_path(self, host_name: str, object_path: str, engine: Engine | None = None):
         """Query hash record by host name and object path."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(
             f"Query hash record by host name: {host_name}, object path: {object_path}"
         )
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 hash_record = (
                     session.query(ObjectHashTable)
                     .filter_by(host_name=host_name, object_path=object_path)
@@ -377,11 +383,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_hash_record_by_scan_id(self, scan_id: int):
+    def query_hash_record_by_scan_id(self, scan_id: int, engine: Engine | None = None):
         """Query hash record by scan id."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Query hash record by scan id: {scan_id}")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 hash_record = (
                     session.query(ObjectHashTable).filter_by(scan_id=scan_id).first()
                 )
@@ -396,18 +403,19 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def insert_hash_record(self, hash_record: ObjectHashTable):
+    def insert_hash_record(self, hash_record: ObjectHashTable, engine: Engine | None = None):
         """Insert hash record."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Insert hash record: {hash_record}")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 session.add(hash_record)
                 session.commit()
         except exc.OperationalError as e:
             self._logger.error(f"Insert hash record failed: {e}")
             raise ObjectHashDbOperationlError(f"Insert hash record failed: {e}") from e
         except exc.IntegrityError as e:
-            db_record = self.query_hash_record_by_scan_id(hash_record.scan_id)
+            db_record = self.query_hash_record_by_scan_id(hash_record.scan_id, db_engine)
             if db_record:
                 for key, value in db_record.__table__.columns.items():
                     if key == "id" or key == "is_processed":
@@ -432,11 +440,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_manual_review_record_by_scan_id(self, scan_id: int):
+    def query_manual_review_record_by_scan_id(self, scan_id: int, engine: Engine | None = None):
         """Query manual review record by scan id."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Query manual review record by scan id: {scan_id}")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 manual_review_record = (
                     session.query(ManualReviewObjectTable)
                     .filter_by(scan_id=scan_id)
@@ -460,12 +469,13 @@ class HashRepository:
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
     def insert_manual_review_record(
-        self, manual_review_record: ManualReviewObjectTable
+        self, manual_review_record: ManualReviewObjectTable, engine: Engine | None = None
     ):
         """Insert manual review record."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Insert manual review record: {manual_review_record}")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 session.add(manual_review_record)
                 session.commit()
         except exc.OperationalError as e:
@@ -475,7 +485,7 @@ class HashRepository:
             ) from e
         except exc.IntegrityError as e:
             db_record = self.query_manual_review_record_by_scan_id(
-                manual_review_record.scan_id
+                manual_review_record.scan_id, db_engine
             )
             if db_record:
                 for key, value in db_record.__table__.columns.items():
@@ -496,11 +506,12 @@ class HashRepository:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def set_scan_record_status(self, scan_id: int, status: Literal["waiting", "processing", "done"]):
+    def set_scan_record_status(self, scan_id: int, status: Literal["waiting", "processing", "done"], engine: Engine | None = None):
         """Set scan record status."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Set scan record status: {scan_id}, {status}")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 scan_record = (
                     session.query(ScanTable)
                     .filter_by(id=scan_id)
@@ -533,11 +544,12 @@ class HashStatusManger:
     @retry_decorator(
         retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
     )
-    def query_finish_status(self) -> ServiceStatusTable|None:
+    def query_finish_status(self, engine: Engine | None = None) -> ServiceStatusTable|None:
         """Query finish status by scan id."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug("Query object hash service finish status")
         try:
-            with Session(self._db_engine) as session:
+            with Session(db_engine) as session:
                 return (
                     session.query(ServiceStatusTable)
                     .filter_by(service_name="object_hash_service")
@@ -556,12 +568,13 @@ class HashStatusManger:
                 f"Query object hash service finish status failed: {e}"
             ) from e
 
-    def set_finish_status(self, finish_status: bool):
+    def set_finish_status(self, finish_status: bool, engine: Engine | None = None):
         """Set finish status by scan id."""
+        db_engine = engine if engine is not None else self._db_engine
         self._logger.debug(f"Set object hash service finish status: {finish_status}")
         try:
-            with Session(self._db_engine) as session:
-                status_finished = self.query_finish_status()
+            with Session(db_engine) as session:
+                status_finished = self.query_finish_status(db_engine)
                 if status_finished:
                     status_finished.is_finished = finish_status
                 else:
@@ -584,54 +597,64 @@ class HashStatusManger:
             ) from e
 
 
+def _work_func(scan_record: ScanTable, host_name: str, config: "Config", logger_queue: queue.Queue) -> tuple[int, bool]:
+    """独立的工作函数，在子进程中执行。"""
+    import logging
+    from .utils import logger_configurer
+    from .config import Config
+
+    # 在子进程内创建 logger 和 engine
+    logger = logging.getLogger("object_hash_service")
+    logger_configurer(logger_queue)
+    db_engine = DbService(config).get_engine()
+    object_hash_repository = HashRepository(db_engine, logger)
+    hash_core = ObjectHash(host_name, logger)
+
+    try:
+        logger.debug("Start object hash service")
+        logger.debug(f"Query scan record: {scan_record}")
+        logger.debug("Start hash object")
+        result = hash_core.hash_object(scan_record)
+        logger.debug(f"Hash object result: {result}")
+        if isinstance(result, ManualReviewObject):
+            logger.debug(f"insert Manual review object: {result}")
+            db_data = FormatTransformer.manual_review_object_to_db_record(result)
+            object_hash_repository.insert_manual_review_record(db_data, db_engine)
+            logger.debug(f"insert {result} success")
+        elif isinstance(result, HashResult):
+            logger.debug(f"insert HashResult object: {result}")
+            db_data = FormatTransformer.hash_result_to_db_record(result)
+            object_hash_repository.insert_hash_record(db_data, db_engine)
+            logger.debug(f"insert {result} success")
+        else:
+            logger.error(f"Unknown hash result type: {result}")
+            raise ObjectHashServiceError(f"Unknown hash result type: {result}")
+    except ObjectHashDbOperationlError as e:
+        logger.error(f"Object hash service work failed: {e}", exc_info=True)
+        return scan_record.id, False
+    except Exception as e:
+        logger.error(f"Object hash service work failed: {e}", exc_info=True)
+        os._exit(1)
+    else:
+        return scan_record.id, True
+
+
 class ObjectHashService:
     def __init__(self):
         self.set_logger()
-        self._db_engine = DbService().get_engine()
+        self._config = get_config()
+        self._db_engine = DbService(self._config).get_engine()
         self._hash_status_manger = HashStatusManger(self._db_engine, self._logger)
         self._object_hash_repository = HashRepository(self._db_engine, self._logger)
         self._host_name = platform.node()
         self._hash_core = ObjectHash(self._host_name, self._logger)
         self._executor = ProcessPoolExecutor(max_workers=2)
+
     def set_logger(self):
         self._logger = logging.getLogger("object_hash_service")
         self._logger_queue = get_logger_queue()
         self._logger_configurer = logger_configurer
         self._logger_configurer(self._logger_queue)
-
-
-
-    def work(self,scan_record:ScanTable):
-        """Work object hash service."""
-        try:
-            self._logger.debug("Start object hash service")
-            self._logger_configurer(self._logger_queue)
-            self._logger.debug("Query scan record")
-            self._logger.debug(f"Query scan record: {scan_record}")
-            self._logger.debug("Start hash object")
-            result = self._hash_core.hash_object(scan_record)
-            self._logger.debug(f"Hash object result: {result}")
-            if isinstance(result, ManualReviewObject):
-                self._logger.debug(f"insert Manual review object: {result}")
-                db_data = FormatTransformer.manual_review_object_to_db_record(result)
-                self._object_hash_repository.insert_manual_review_record(db_data)
-                self._logger.debug(f"insert {result} success")
-            elif isinstance(result, HashResult):
-                self._logger.debug(f"insert HashResult object: {result}")
-                db_data = FormatTransformer.hash_result_to_db_record(result)
-                self._object_hash_repository.insert_hash_record(db_data)
-                self._logger.debug(f"insert {result} success")
-            else:
-                self._logger.error(f"Unknown hash result type: {result}")
-                raise ObjectHashServiceError(f"Unknown hash result type: {result}")
-        except ObjectHashDbOperationlError as e:
-            self._logger.error(f"Object hash service work failed: {e}",exc_info=True)
-            return scan_record.id,False
-        except Exception as e:
-            self._logger.error(f"Object hash service work failed: {e}",exc_info=True)
-            os._exit(1)
-        else:
-            return scan_record.id,True
     
 
     def run(self):
@@ -657,7 +680,8 @@ class ObjectHashService:
                     os._exit(1)
                 self._logger.debug(f"Submit scan record to object hash service: {scan_record}")
                 self._object_hash_repository.set_scan_record_status(scan_record.id, "processing")
-                futures.append(executor.submit(self.work, scan_record))
+                # 使用独立函数，传递必要参数
+                futures.append(executor.submit(_work_func, scan_record, self._host_name, self._config, self._logger_queue))
             for future in futures:
                 scan_record_id,result = future.result()
                 status = "done" if result else "fail"
