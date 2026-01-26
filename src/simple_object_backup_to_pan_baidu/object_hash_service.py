@@ -88,7 +88,9 @@ class ObjectHashTable(DbMixin, HashBase):
     md5: Mapped[str] = mapped_column(String(32), nullable=False)
     sha1: Mapped[str] = mapped_column(String(40), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[Literal["waiting", "processing", "fail", "done"]] = mapped_column(
+        String(15), default="waiting"
+    )
 
     __table_args__ = (
         UniqueConstraint("host_name", "object_path", name="uix_host_name_object_path"),
@@ -317,7 +319,7 @@ class HashRepository:
             with Session(self._db_engine) as session:
                 scan_record = (
                     session.query(ScanTable)
-                    .filter_by(is_hashed=False)
+                    .filter_by(status="waiting")
                     .order_by(ScanTable.id.asc())
                     .first()
                 )
@@ -491,7 +493,37 @@ class HashRepository:
             raise ObjectHashRepositoryError(
                 f"Insert manual review record failed: {e}"
             ) from e
-
+    @retry_decorator(
+        retries=3, delay=1, backoff=2, exceptions=(ObjectHashDbOperationlError,)
+    )
+    def set_scan_record_status(self, scan_id: int, status: Literal["waiting", "processing", "done"]):
+        """Set scan record status."""
+        self._logger.debug(f"Set scan record status: {scan_id}, {status}")
+        try:
+            with Session(self._db_engine) as session:
+                scan_record = (
+                    session.query(ScanTable)
+                    .filter_by(id=scan_id)
+                    .first()
+                )
+                if scan_record:
+                    scan_record.status = status
+                    session.commit()
+                else:
+                    self._logger.error(f"Scan record not found: {scan_id}")
+                    raise ObjectHashRepositoryError(
+                        f"Scan record not found: {scan_id}"
+                    )
+        except exc.OperationalError as e:
+            self._logger.error(f"Set scan record status failed: {e}")
+            raise ObjectHashDbOperationlError(
+                f"Set scan record status failed: {e}"
+            ) from e
+        except Exception as e:
+            self._logger.error(f"Set scan record status failed: {e}")
+            raise ObjectHashRepositoryError(
+                f"Set scan record status failed: {e}"
+            ) from e
 
 class HashStatusManger:
     def __init__(self, db_engine: Engine, logger: logging.Logger):
@@ -594,12 +626,12 @@ class ObjectHashService:
                 raise ObjectHashServiceError(f"Unknown hash result type: {result}")
         except ObjectHashDbOperationlError as e:
             self._logger.error(f"Object hash service work failed: {e}",exc_info=True)
-            return False
+            return scan_record.id,False
         except Exception as e:
             self._logger.error(f"Object hash service work failed: {e}",exc_info=True)
             os._exit(1)
         else:
-            return True
+            return scan_record.id,True
     
 
     def run(self):
@@ -624,9 +656,12 @@ class ObjectHashService:
                     self._logger.error("No scan record found and scan service is not finished for 60 seconds")
                     os._exit(1)
                 self._logger.debug(f"Submit scan record to object hash service: {scan_record}")
+                self._hash_status_manger.set_scan_record_status(scan_record.id, "processing")
                 futures.append(executor.submit(self.work, scan_record))
             for future in futures:
-                future.result()
+                scan_record_id,result = future.result()
+                status = "done" if result else "fail"
+                self._hash_status_manger.set_scan_record_status(scan_record_id, status)
             self._hash_status_manger.set_finish_status(True)
 
     def stop(self):
@@ -638,3 +673,15 @@ class ObjectHashService:
         """Reset object hash service table."""
         self._object_hash_repository.reset_table()
         self._hash_status_manger.set_finish_status(False)
+    
+    def reset_scan_processing_to_waiting(self):
+        """Reset scan processing records to waiting."""
+        with Session(self._db_engine) as session:
+            session.query(ScanTable).filter(ScanTable.status == "processing").update({"status": "waiting"})
+            session.commit()
+
+    def reset_scan_fail_to_waiting(self):
+        """Reset scan fail records to waiting."""
+        with Session(self._db_engine) as session:
+            session.query(ScanTable).filter(ScanTable.status == "fail").update({"status": "waiting"})
+            session.commit()

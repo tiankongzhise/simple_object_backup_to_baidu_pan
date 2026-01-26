@@ -3,6 +3,7 @@ from typing import TypeVar
 from pydantic import BaseModel, DirectoryPath,Field
 from multiprocessing import Manager
 from multiprocessing.queues import Queue
+from threading import Lock
 import logging
 
 class ConfigServiceError(Exception):
@@ -258,6 +259,7 @@ class Config(BaseModel):
 
 __config_instance: Config = None # type: ignore
 __logger_queue_instance: Queue = None # type: ignore
+__config_lock = Lock() # 配置锁，确保线程安全
 
 def get_logger_queue() -> Queue:
     """获取日志队列实例，延迟初始化以避免在模块导入时创建进程"""
@@ -268,15 +270,16 @@ def get_logger_queue() -> Queue:
 
 def get_config():
 
-    global __config_instance
-    if __config_instance is None:
-        temp_config = Config()
-        config_data = _load_toml(temp_config.toml_path)
-        if config_data:
-            __config_instance = Config(**config_data)
-        else:
-            __config_instance = temp_config
-        _load_env(temp_config.db_env_path, temp_config.upload_env_path)
+    global __config_instance, __config_lock
+    with __config_lock: # 加锁确保线程安全
+        if __config_instance is None:
+            temp_config = Config()
+            config_data = _load_toml(temp_config.toml_path)
+            if config_data:
+                __config_instance = Config(**config_data)
+            else:
+                __config_instance = temp_config
+            _load_env(temp_config.db_env_path, temp_config.upload_env_path)
     return __config_instance
 
 if __name__ == "__main__":

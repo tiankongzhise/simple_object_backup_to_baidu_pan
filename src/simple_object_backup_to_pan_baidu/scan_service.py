@@ -63,7 +63,7 @@ class ScanTable(DbMixin, ScanBase):
     object_size: Mapped[int] = mapped_column(BigInteger)
     object_item_count: Mapped[int] = mapped_column(Integer)
     object_items: Mapped[dict] = mapped_column(JSON)
-    is_hashed: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[Literal['waiting','processing','fail','done']] = mapped_column(String(15), default='waiting')
     __table_args__ = (UniqueConstraint('host_name', 'object_path', name='uix_host_name_object_path'),)
 
 
