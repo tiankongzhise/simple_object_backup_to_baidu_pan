@@ -656,14 +656,13 @@ class ObjectHashService:
                     self._logger.error("No scan record found and scan service is not finished for 60 seconds")
                     os._exit(1)
                 self._logger.debug(f"Submit scan record to object hash service: {scan_record}")
-                self._hash_status_manger.set_scan_record_status(scan_record.id, "processing")
+                self._object_hash_repository.set_scan_record_status(scan_record.id, "processing")
                 futures.append(executor.submit(self.work, scan_record))
             for future in futures:
                 scan_record_id,result = future.result()
                 status = "done" if result else "fail"
-                self._hash_status_manger.set_scan_record_status(scan_record_id, status)
+                self._object_hash_repository.set_scan_record_status(scan_record_id, status)
             self._hash_status_manger.set_finish_status(True)
-
     def stop(self):
         """Stop object hash service."""
         self._executor.shutdown(wait=True, cancel_futures=True)
