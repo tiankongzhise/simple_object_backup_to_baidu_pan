@@ -262,13 +262,29 @@ class ScanStatusManager:
     def change_finish_status(self, status: Literal[True, False]) -> None:
         """Change the scan service finish status in database"""
         self._logger.debug("Changing scan service finish status...")
-        query_result = self.query_finish_status()
-        if query_result is None:
-            self.add_finish_status()
-            query_result = self.query_finish_status()
         with Session(self._db_engine) as session:
-            query_result.is_finished = status
-            session.commit()
+            query_result = session.query(ServiceStatusTable).filter(
+                ServiceStatusTable.service_name == "scan_service"
+            ).scalar()
+            if query_result is None:
+                try:
+                    session.add(ServiceStatusTable(service_name="scan_service", is_finished=status))
+                    session.commit()
+                except exc.OperationalError as e:
+                    self._logger.error("Scan service finish status insert failed because of an operational error.")
+                    session.rollback()
+                    raise ScanDbOperationalError(f"Error sending scan service finish status: {e}") from e
+                except exc.IntegrityError as e:
+                    self._logger.error("Scan service finish status insert failed because of an integrity error.")
+                    session.rollback()
+                    raise ScanDbIntegrityError(f"Error sending scan service finish status: {e}") from e
+                except Exception as e:
+                    session.rollback()
+                    self._logger.error("Scan service finish status insert failed because of an error.")
+                    raise ScanDbError(f"Error sending scan service finish status: {e}") from e
+            else:
+                query_result.is_finished = status
+                session.commit()
         self._logger.info(f"Scan service finish status changed to {status}.")
 
 
