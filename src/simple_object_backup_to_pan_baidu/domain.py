@@ -6,7 +6,7 @@ import time
 
 from logger import get_logger
 
-logger = get_logger(__name__)
+
 
 
 
@@ -24,6 +24,7 @@ class BaseService(ABC):
         self._stop_accepting = threading.Event()
         self._pending_futures: Set[Future] = set()
         self._futures_lock = threading.Lock()
+        self.logger = get_logger(name)
     def _create_executor_params(self, name: str, max_workers: int, pool_type:Literal["thread", "process"]):
         if pool_type == "thread":
             return {"max_workers": max_workers, "thread_name_prefix": f"{name}_"}

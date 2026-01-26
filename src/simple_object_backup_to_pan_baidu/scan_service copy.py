@@ -9,10 +9,11 @@ import os
 import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed,TimeoutError,CancelledError
 from typing import Literal, Sequence
-import logging
+
+from .logger_backup import get_logger
 
 from .db_service import DbService
-from .utils import retry_decorator,DbMixin,StatusFinishedTable,WorkerMixin
+from .utils import retry_decorator,DbMixin,StatusFinishedTable
 
 class ScanServiceError(Exception):
     """Base class for scan service errors"""
@@ -60,9 +61,9 @@ class ScanTable(DbMixin,ScanBase):
     __table_args__ = (UniqueConstraint('host_name', 'object_path', name='uix_host_name_object_path'),)
 
 
-class ScanService(WorkerMixin):
+class ScanService:
     def __init__(self,source_object_paths:Sequence[Path|str],db_engine:Engine|None = None):
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.logger.debug("Scan service initializing...")
         self.source_object_paths = [Path(path) for path in source_object_paths]
         self.db_engine = db_engine or DbService().get_engine()
@@ -104,7 +105,7 @@ class ScanService(WorkerMixin):
         object_items=object_items
     )
 
-    def _do_work(self,object_path:Path):
+    def scan_object(self,object_path:Path):
         if not object_path.exists():
             raise ScanServiceValueError(f"Object path does not exist: {object_path}")
         self._current_object_path = object_path

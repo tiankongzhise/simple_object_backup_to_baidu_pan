@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import TypeVar
 from pydantic import BaseModel,Field
+from multiprocessing import Manager
+from multiprocessing.queues import Queue
 import logging
 
 class ConfigServiceError(Exception):
@@ -120,7 +122,6 @@ class Config(BaseModel):
 
     # 用户定制化配置文件路径
     toml_path: str = Field(default='config.toml', description="用户定制化配置文件路径") # 用户定制化配置文件路径
-
     logger_setting: dict = Field(default={
         'version': 1,
         'disable_existing_loggers': False,
@@ -235,20 +236,28 @@ class Config(BaseModel):
         },
         'loggers': {
             'main': {
-                'handlers': ['console_main','time_rotate_main','errors','debug_only_console'],
+                'handlers': ['console_main','time_rotate_main','errors','debug_only_file'],
                 'level': 'DEBUG',
-                'propagate': False,
+                # 'propagate': False,
             },
         },
         'root': {
-                'handlers': ['console_service','time_rotate_service','errors','debug_only_console','debug_only_file'],
+                'handlers': ['console_service','time_rotate_service','errors','debug_only_file'],
                 'level': 'DEBUG',
-                'propagate': False,
+                # 'propagate': False,
             },
     }, description="日志配置") # 日志配置
 
 
 __config_instance: Config = None # type: ignore
+__logger_queue_instance: Queue = None # type: ignore
+
+def get_logger_queue() -> Queue:
+    """获取日志队列实例，延迟初始化以避免在模块导入时创建进程"""
+    global __logger_queue_instance
+    if __logger_queue_instance is None:
+        __logger_queue_instance = Manager().Queue()
+    return __logger_queue_instance
 
 def get_config():
 
