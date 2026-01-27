@@ -117,12 +117,21 @@ class _ServiceRepository:
         self.create_record_table()
 
     @db_connect_retry()
-    def set_service_status(self, status: str):
+    def set_service_status(self, status: bool):
         self.logger.info(f"Service status set to {status}")
         ServiceStatusTable.metadata.create_all(self.engine)
         with Session(self.engine) as session:
-            session.merge(ServiceStatusTable(service_name=self.service_name, is_finished=status))
-            session.commit()
+            # Upsert: update if exists, insert if not
+            existing = session.query(ServiceStatusTable).filter(
+                ServiceStatusTable.service_name == self.service_name
+            ).first()
+            if existing:
+                existing.is_finished = status
+                session.commit()
+            else:
+                session.add(ServiceStatusTable(service_name=self.service_name, is_finished=status))
+                session.commit()
+
 
 
 def _scan_file(file_path: Path, relative_path: Path, host_name: str, logger:logging.Logger) -> _FormatData:
@@ -265,7 +274,7 @@ class ScanService:
 
     def _process_directory_target_path(self, target_path: Path, finished_count: int, target_paths_count: int):
         items = list(target_path.iterdir())
-        self.logger.info(f'process {target_path},Total target paths: {target_paths_count}, items count: {len(items)}, finished count: {finished_count} waiting...')
+        self.logger.info(f'process {target_path},Total target paths: {target_paths_count}, items count: {len(items)}, finished count: {finished_count}, please waiting to processing...')
         for item in items:
             self.tasks.append(self.executor.submit(self.worker, item, self.host_name, self.logger))
     

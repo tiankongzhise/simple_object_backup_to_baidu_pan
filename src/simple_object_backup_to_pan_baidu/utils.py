@@ -101,6 +101,10 @@ def retry_for_class_method(
                         print(f"{service_name}.{func_name}Exception {e} occurred, retrying... ({i}/{retries})")
                     
                     if i == retries:
+                        if logger:
+                            logger.error(f"{service_name}.{func_name}Exception {e} occurred, max retries {retries} reached")
+                        else:
+                            print(f"{service_name}.{func_name}Exception {e} occurred, max retries {retries} reached")
                         raise raise_exception(f"{service_name}.{func_name} raised an exception after {retries} retries,max retries reached") from e
                     
                     sleep_time = delay * (backoff ** (i - 1))
@@ -112,7 +116,7 @@ def retry_for_class_method(
                 except Exception as e:
                     if logger:
                         logger.error(f"{service_name}.{func_name}Exception {e} occurred, retrying... ({i}/{retries})", exc_info=True)
-                    raise raise_exception(f"Method {func.__name__} raised an exception after {retries} retries") from e
+                    raise raise_exception(f"Method {func.__name__} raised an exception after {i} retries") from e
             raise Exception("Unreachable: retries must be >= 1")
         return wrapper
     return decorator
