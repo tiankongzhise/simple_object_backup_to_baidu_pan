@@ -6,6 +6,8 @@ from multiprocessing.queues import Queue
 from threading import Lock
 import logging
 
+from pydantic.type_adapter import P
+
 class ConfigServiceError(Exception):
     """Config service error"""
 class ConfigInitError(ConfigServiceError):
@@ -77,6 +79,19 @@ class DebugOnlyFilter(logging.Filter):
     def filter(self, record):
         return record.levelno == logging.DEBUG
 
+class ServiceLoggerFilter(logging.Filter):
+    def filter(self, record):
+        # 检查logger名称是否以_service结尾
+        if hasattr(record, 'name') and record.name.endswith('_service'):
+            return True
+        return False
+class ManagerLoggerFilter(logging.Filter):
+    def filter(self, record):
+        # 检查logger名称是否以_manager结尾
+        if hasattr(record, 'name') and record.name.endswith('_manager'):
+            return True
+        return False
+
 class Config(BaseModel):
 
     # 数据库配置项
@@ -136,101 +151,74 @@ class Config(BaseModel):
         'filters': {
             'debug_only_filter': {
                 '()': DebugOnlyFilter
+            },
+            'service_logger_filter': {
+                '()': ServiceLoggerFilter
+            },
+            'manager_logger_filter': {
+                '()': ManagerLoggerFilter
             }
         },
         'formatters': {
-            'service': {
+            'simple': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(name)-15s %(levelname)-8s %(processName)-10s %(threadName)-10s %(message)s'
+                'format': '%(asctime)s | %(levelname)-8s | %(name)-8s | %(message)s'
             },
-            'debug': {
+  
+            'standard': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(name)-15s %(pathname)s %(filename)s %(funcName)s %(lineno)s %(levelname)-8s %(processName)-10s %(threadName)-10s %(message)s'
+                'format': '%(asctime)s | %(levelname)-8s | [%(name)s:%(filename)s:%(lineno)d] | %(message)s'
             },
-            'main': {
+            'detailed': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(name)-15s %(levelname)-8s %(message)s'
+                'format': '%(asctime)s | %(levelname)-8s | [%(name)s:%(filename)s:%(lineno)d] | [%(processName)s:%(process)d] | [%(threadName)s:%(thread)d] | %(message)s'
             },
-        },
+      },
         'handlers': {
-            'console_debug': {
+            'console_simple': {
                 'class': 'logging.StreamHandler',
+                'formatter': 'simple',
                 'level': 'INFO',
-                'formatter': 'debug',
             },
-            'console_service': {
+            'console_standard': {
                 'class': 'logging.StreamHandler',
+                'formatter': 'standard',
                 'level': 'INFO',
-                'formatter': 'service',
             },
-            'console_main': {
+            'console_detailed': {
                 'class': 'logging.StreamHandler',
+                'formatter': 'detailed',
                 'level': 'INFO',
-                'formatter': 'main',
             },
-            'size_rotate_debug': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': './log/logger_rotate_debug.log',
-                'maxBytes': 5 * 1024 * 1024,  # 5MB
-                'backupCount': 10,
-                'formatter': 'debug',
-                'encoding': 'utf-8',
+            'file_simple':{
+                'class': 'logging.FileHandler',
+                'filename': './log/logger.log',
+                'formatter': 'simple',
+                'level': 'INFO',
             },
-            'size_rotate_service': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': './log/logger_rotate_service.log',
-                'maxBytes': 5 * 1024 * 1024,  # 5MB
-                'backupCount': 10,
-                'formatter': 'service',
-                'encoding': 'utf-8',
+            'file_standard':{
+                'class': 'logging.FileHandler',
+                'filename': './log/logger.log',
+                'formatter': 'standard',
+                'level': 'INFO',
             },
-            'size_rotate_main': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': './log/logger_rotate_main.log',
-                'maxBytes': 5 * 1024 * 1024,  # 5MB
-                'backupCount': 10,
-                'formatter': 'main',
-                'encoding': 'utf-8',
-            },
-            # 按时间轮转的处理器
-            'time_rotate_debug': {
-                'class': 'logging.handlers.TimedRotatingFileHandler',
-                'filename': './log/logger_rotate_debug_time.log',
-                'when': 'midnight',
-                'interval': 1,
-                'backupCount': 30,
-                'formatter': 'debug',
-                'encoding': 'utf-8',
-            },
-            'time_rotate_service': {
-                'class': 'logging.handlers.TimedRotatingFileHandler',
-                'filename': './log/logger_rotate_service_time.log',
-                'when': 'midnight',
-                'interval': 1,
-                'backupCount': 30,
-                'formatter': 'service',
-                'encoding': 'utf-8',
-            },
-            'time_rotate_main': {
-                'class': 'logging.handlers.TimedRotatingFileHandler',
-                'filename': './log/logger_rotate_main_time.log',
-                'when': 'midnight',
-                'interval': 1,
-                'backupCount': 30,
-                'formatter': 'main',
-                'encoding': 'utf-8',
+            'file_detailed':{
+                'class': 'logging.FileHandler',
+                'filename': './log/logger.log',
+                'formatter': 'detailed',
+                'level': 'INFO',
             },
             'errors': {
                 'class': 'logging.FileHandler',
                 'filename': './log/errors.log',
                 'mode': 'a',
                 'level': 'ERROR',
-                'formatter': 'debug',
+                'formatter': 'detailed',
             },
             'debug_only_console': {
                 'class': 'logging.StreamHandler',
                 'level': 'DEBUG',
-                'formatter': 'debug',
+                'formatter': 'detailed',
                 'filters': ['debug_only_filter']
             },
             'debug_only_file': {
@@ -238,21 +226,28 @@ class Config(BaseModel):
                 'filename': './log/debug.log',
                 'mode': 'a',
                 'level': 'DEBUG',
-                'formatter': 'debug',
+                'formatter': 'detailed',
                 'filters': ['debug_only_filter']
             },
         },
         'loggers': {
-            'main': {
-                'handlers': ['console_main','time_rotate_main','errors','debug_only_file'],
+            'manager': {
+                'handlers': ['console_simple','file_standard','errors','debug_only_file'],
                 'level': 'DEBUG',
-                # 'propagate': False,
+                'propagate': False,
+                'filters': ['manager_logger_filter'],
             },
+            'service': {
+                'handlers': ['console_simple','file_detailed','errors','debug_only_file'],
+                'level': 'DEBUG',
+                'propagate': False,
+                'filters': ['service_logger_filter']
+        },
         },
         'root': {
-                'handlers': ['console_service','time_rotate_service','errors','debug_only_file'],
+                'handlers': ['console_detailed','file_detailed','errors','debug_only_file'],
                 'level': 'DEBUG',
-                # 'propagate': False,
+                'propagate': False
             },
     }, description="日志配置") # 日志配置
 
