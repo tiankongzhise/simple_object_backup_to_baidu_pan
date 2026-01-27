@@ -40,7 +40,9 @@ def retry_decorator(
     retries:int = 3,
     delay:float = 1.0,
     backoff:float = 1.0,
-    exceptions:tuple[type[Exception]] = (Exception,)
+    exceptions:tuple[type[Exception]] = (Exception,),
+    logger:Logger|None = None,
+    raise_exception:type[Exception] = Exception,
     ):
     def decorator(func:Callable[...,T]) -> Callable[...,T]:
         @wraps(func)
@@ -49,18 +51,69 @@ def retry_decorator(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
-                    print(f"Exception {e} occurred, retrying... ({i}/{retries})")
+                    if logger:
+                        logger.error(f"Exception {e} occurred, retrying... ({i}/{retries})", exc_info=True)
+                    else:
+                        print(f"Exception {e} occurred, retrying... ({i}/{retries})")
                     if i == retries:
                         raise 
                     sleep_time = delay * (backoff ** (i-1))
-                    print(f"Retrying after {sleep_time:.1f} seconds...")
+                    if logger:
+                        logger.info(f"Retrying after {sleep_time:.1f} seconds...")
+                    else:
+                        print(f"Retrying after {sleep_time:.1f} seconds...")
                     time.sleep(sleep_time)
                 except Exception as e:
-                    raise RetryError(f"Function {func.__name__} raised an exception after {retries} retries") from e
-            raise ValueError("Unreachable: retries must be >= 1")
+                    raise raise_exception(f"Function {func.__name__} raised an exception after {retries} retries") from e
+            raise RetryError("Unreachable: retries must be >= 1")
         return wrapper
     return decorator
 
+import time
+from functools import wraps
+from typing import Any, Callable, TypeVar, Type
+import logging
+T = TypeVar('T')
+def retry_for_class_method(
+    retries: int = 3,
+    delay: float = 1.0,
+    backoff: float = 1.0,
+    exceptions: tuple[Type[Exception]] = (Exception,),
+    raise_exception: Type[Exception] = Exception,
+    logger_attr: str = "logger"  # 支持自定义logger属性名
+):
+    """专为类方法设计的重试装饰器"""
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(instance: Any, *args: Any, **kwargs: Any) -> T:
+            # 从实例中获取logger
+            logger = getattr(instance, logger_attr, None)
+            service_name = instance.service_name
+            func_name = func.__name__
+            
+            for i in range(1, retries + 1):
+                try:
+                    return func(instance, *args, **kwargs)
+                except exceptions as e:
+                    if logger:
+                        logger.error(f"{service_name}.{func_name}Exception {e} occurred, retrying... ({i}/{retries})", exc_info=True)
+                    else:
+                        print(f"{service_name}.{func_name}Exception {e} occurred, retrying... ({i}/{retries})")
+                    
+                    if i == retries:
+                        raise raise_exception(f"{service_name}.{func_name} raised an exception after {retries} retries,max retries reached") from e
+                    
+                    sleep_time = delay * (backoff ** (i - 1))
+                    if logger:
+                        logger.info(f"Retrying after {sleep_time:.1f} seconds...")
+                    else:
+                        print(f"Retrying after {sleep_time:.1f} seconds...")
+                    time.sleep(sleep_time)
+                except Exception as e:
+                    raise raise_exception(f"Method {func.__name__} raised an exception after {retries} retries") from e
+            raise Exception("Unreachable: retries must be >= 1")
+        return wrapper
+    return decorator
 
 
 
