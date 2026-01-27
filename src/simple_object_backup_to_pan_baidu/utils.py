@@ -110,6 +110,8 @@ def retry_for_class_method(
                         print(f"Retrying after {sleep_time:.1f} seconds...")
                     time.sleep(sleep_time)
                 except Exception as e:
+                    if logger:
+                        logger.error(f"{service_name}.{func_name}Exception {e} occurred, retrying... ({i}/{retries})", exc_info=True)
                     raise raise_exception(f"Method {func.__name__} raised an exception after {retries} retries") from e
             raise Exception("Unreachable: retries must be >= 1")
         return wrapper

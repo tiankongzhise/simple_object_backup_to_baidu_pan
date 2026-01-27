@@ -5,14 +5,17 @@ from sqlalchemy import exc
 
 from pathlib import Path
 from typing import Literal
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import platform
 import sys
 
+
+
 from .utils import DbMixin, retry_for_class_method,ServiceStatusTable
 from .db_service import DbService
 from .config import get_config
+from .domain import ServiceStatus
 
 class ScanServiceError(Exception):
     """Scan Service Error"""
@@ -80,7 +83,7 @@ class _ServiceRepository:
     @db_connect_retry()
     def get_scan_record_by_id(self, id: int):
         with Session(self.engine) as session:
-            return session.get(ScanRecords, id)
+            return session.query(ScanRecords).filter(ScanRecords.id == id).first()
 
     @db_connect_retry()
     def get_scan_record_by_unique(self, host_name: str, object_path: str):
@@ -97,11 +100,17 @@ class _ServiceRepository:
             session.commit()
     @db_connect_retry()
     def create_record_table(self):
+        self.logger.info("Creating scan records table...")
+        print("Creating scan records table...")
         ScanRecords.metadata.create_all(self.engine)
+        self.logger.info("Scan records table created.")
 
     @db_connect_retry()
     def drop_record_table(self):
+        self.logger.info("Dropping scan records table...")
+        print("Dropping scan records table...")
         ScanRecords.metadata.drop_all(self.engine)
+        self.logger.info("Scan records table dropped.")
 
     def reset_record_table(self):
         self.drop_record_table()
@@ -112,7 +121,7 @@ class _ServiceRepository:
         self.logger.info(f"Service status set to {status}")
         ServiceStatusTable.metadata.create_all(self.engine)
         with Session(self.engine) as session:
-            session.merge(ServiceStatusTable(service_name=self.service_name, status=status))
+            session.merge(ServiceStatusTable(service_name=self.service_name, is_finished=status))
             session.commit()
 
 
@@ -169,24 +178,69 @@ def _scan_object(object_path: Path, host_name: str, logger:logging.Logger) -> _F
 
 
 class ScanService:
-    def __init__(self, max_worker: int):
-        self.repository = _ServiceRepository('scan_service')
+    def __init__(self, max_worker: int = 10):
+        self.service_name = 'scan_service'
+        self.repository = _ServiceRepository(self.service_name)
         self.host_name = platform.node()
-        self.logger = logging.getLogger('service.scan_service')
+        self.logger = logging.getLogger(f'service.{self.service_name}')
         temp_config = get_config()
         self.target_paths = [Path(path) for path in temp_config.source_path_list]
         self.executor = ThreadPoolExecutor(max_worker, thread_name_prefix='scan_service_thread')
         self.tasks = []
+        self.status = ServiceStatus.INIT
+        self.process_result = {
+            'success': [],
+            'fail': [],
+            'target_path_not_exist': []
+        }
 
     def start(self):
-        ...
+        self.status = ServiceStatus.START
+        self._set_scan_service_status_unfinished()
+        try:
+            self.logger.info(f'{self.service_name} started')
+            self.process()
+            self.logger.info(f'{self.service_name} process finished')
+            self.status = ServiceStatus.DONE
+        except Exception as e:
+            self.logger.error(f'{self.service_name} error: {e}')
+            self.status = ServiceStatus.FAIL
+        finally:
+            self._set_scan_service_status_finished()
+ 
+
+        
     
     def process(self):
+        self.status = ServiceStatus.PROCESSING
+        self.logger.info(f'{self.service_name} process_started')
+        target_paths_count = len(self.target_paths)
+        finished_count = 0
         with self.executor as executor:
-            for path in self.target_paths:
-                self.tasks.append(executor.submit(self.worker, path, self.host_name, self.logger))
+            self.status = ServiceStatus.SUBMITTING
+            for target_path in self.target_paths:
+                if target_path.is_file():
+                    self._process_file_target_path(target_path, finished_count, target_paths_count)
+                elif target_path.is_dir():
+                    self._process_directory_target_path(target_path, finished_count, target_paths_count)
+                else:
+                    self._process_invalid_target_path(target_path, finished_count, target_paths_count)
+                finished_count += 1
+            self.status = ServiceStatus.SUBMITTED
+            for task in as_completed(self.tasks):
+                result = task.result()
+                if result['status']:
+                    process_result = self._process_success_scan(result)
+                else:
+                    process_result = self._process_fail_scan(result)
+                if process_result:
+                    self.process_result['success'].append(result['object'])
+                else:
+                    self.process_result['fail'].append(result['object'])
+        self.status = ServiceStatus.PROCESSED
     @staticmethod
     def worker(object_path: Path, host_name: str, logger:logging.Logger):
+        logger.debug(f'Processing object: {object_path}')
         try:
             result = _scan_object(object_path, host_name, logger)
             return {'object':object_path, 'status':True,'result':result}
@@ -195,12 +249,65 @@ class ScanService:
             return {'object':object_path, 'status':False,'result':None}
 
     def stop(self):
-        self.logger.warning('scan_service_stop_requested')
+        self.logger.warning(f'{self.service_name} stop requested')
         self.executor.shutdown(wait=False, cancel_futures=True)
         sys.exit('scan_service_stop_requested')
 
         
     def shutdown(self):
         import os
-        self.logger.warning('scan_service_shutdown_requested')
+        self.logger.warning(f'{self.service_name} shutdown requested')
         os._exit(1)  # Use os._exit to immediately terminate the process without running any cleanup code
+
+    def _process_file_target_path(self, target_path: Path, finished_count: int, target_paths_count: int):
+        self.logger.info(f'process {target_path},Total target paths: {target_paths_count}, finished count: {finished_count}')
+        self.tasks.append(self.executor.submit(self.worker, target_path, self.host_name, self.logger))
+
+    def _process_directory_target_path(self, target_path: Path, finished_count: int, target_paths_count: int):
+        items = list(target_path.iterdir())
+        self.logger.info(f'process {target_path},Total target paths: {target_paths_count}, items count: {len(items)}, finished count: {finished_count} waiting...')
+        for item in items:
+            self.tasks.append(self.executor.submit(self.worker, item, self.host_name, self.logger))
+    
+    def _process_invalid_target_path(self, target_path: Path, finished_count: int, target_paths_count: int):
+        self.logger.warning(f'Invalid target path: {target_path}, total target paths: {target_paths_count}, finished count: {finished_count}, skipped')
+        self.process_result['target_path_not_exist'].append(target_path)
+
+    def _process_success_scan(self, result):
+        self.logger.debug(f"process scan successful: {result}")
+        if not result['status']:
+            raise ScanServiceError(f"Scan failed: {result} ,should never reach here")
+        record = self.repository.get_scan_record_by_unique(host_name = self.host_name, object_path = result['object'].resolve().as_posix())
+        if record:
+            self.logger.debug(f"Scan record found: {record}")
+            if not self._compare_scan_data(record, result):
+                self.logger.critical(f"Scan data mismatch: {record} {result}")
+                return False
+            self.logger.debug(f"scan record matched: {record}")
+            return True
+        else:
+            self.repository.add_scan_record(result['result'])
+            self.logger.debug(f"Scan record added: {result}")
+            return True
+    def _process_fail_scan(self, result):
+        self.logger.error(f"Scan failed: {result}")
+        return False
+
+    def _compare_scan_data(self, record, result):
+        for key,value in result['result'].model_dump().items():
+            if key == 'status':
+                continue
+            if value != getattr(record, key):
+                return False
+        return True
+
+    def _set_scan_service_status_unfinished(self):
+        self.repository.set_service_status(False)
+        self.logger.info(f'{self.service_name} status set to unfinished')
+
+    def _set_scan_service_status_finished(self):
+        self.repository.set_service_status(True)
+        self.logger.info(f'{self.service_name} status set to finished')
+
+    def reset_scan_service_record(self):
+        self.repository.reset_record_table()

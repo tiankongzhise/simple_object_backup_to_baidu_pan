@@ -1,29 +1,45 @@
-from src.simple_object_backup_to_pan_baidu.scan_service import ScanService
-from src.simple_object_backup_to_pan_baidu.config import get_config
-from src.simple_object_backup_to_pan_baidu.logger import logger_start,logger_shutdown
-from src.simple_object_backup_to_pan_baidu.utils import reset_service_status_table
-from src.simple_object_backup_to_pan_baidu.db_service import DbService
 
-def test_scan_service():
-    """Test ScanService"""
-    print("\n=== Testing ScanService ===")
-    print('开启日志')
-    logger_start()
+from src.simple_object_backup_to_pan_baidu.service_manager import ServiceManager
+from src.simple_object_backup_to_pan_baidu.logger_service import LoggerService
+from src.simple_object_backup_to_pan_baidu.scan_service import ScanService
+from src.simple_object_backup_to_pan_baidu.utils import reset_service_status_table
+
+def reset_service_status_table_local():
+    from src.simple_object_backup_to_pan_baidu.db_service import DbService
     db_service = DbService()
     engine = db_service.get_engine()
+    print("reset service status table")
     reset_service_status_table(engine)
-    config = get_config()
-    source_object_paths = config.source_path_list
-    scan_service = ScanService(source_object_paths)
-    print(f'source_object_paths: {source_object_paths}')
-    print('重置扫描表')
-    scan_service.reset_scan_table()
-    print('开始扫描')
-    scan_service.start()
-    print('扫描完成')
-    print('关闭日志')
-    logger_shutdown()
-    print('测试完成')  
+    print("reset scan service record")
 
-if __name__ == '__main__':
-    test_scan_service()
+def reset_scan_service_record():
+    print("reset scan service record")
+    scan_service = ScanService()
+    scan_service.reset_scan_service_record()
+    print("reset scan service record finished")
+
+def simpe_case(service_register_factory:dict):
+    print("simpe case")
+    logger_service = LoggerService()
+    print("logger init")
+    logger_service.start()
+    print("logger start")
+    sm = ServiceManager()
+    print("service manager init")
+    for service_name,service_class in service_register_factory.items():
+        service = service_class()
+        sm.register_service(service_name,service)
+    print("service register")
+    sm.start_all_service()
+    print("service started")
+    sm.wait_for_all_service()
+    print("service finished")
+    logger_service.shutdown()
+    print("logger shutdown")
+
+if __name__ == "__main__":
+    reset_service_status_table_local()
+    reset_scan_service_record()
+    simpe_case({
+        "scan_service": ScanService
+    })
