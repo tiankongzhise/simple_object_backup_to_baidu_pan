@@ -1,11 +1,14 @@
 import time
 from threading import Thread,Lock
 from .domain import ServiceBase,ServiceStatus
+from .logger_service import LoggerService
 import logging
 
 
 class ServiceManager(object):
     def __init__(self):
+        self.logger_service = LoggerService()
+        self.logger_service.start()
         self.services = {}
         self.lock = Lock()
         self.running_services = []
@@ -61,3 +64,7 @@ class ServiceManager(object):
                     self.logger.warning(f"service {name} failed")
             self.logger.debug(f'recheck running services after 1 sceond')
             time.sleep(1)
+        self.logger_service.stop()
+        
+    def stop_logger_service(self):
+        self.logger_service.stop()
