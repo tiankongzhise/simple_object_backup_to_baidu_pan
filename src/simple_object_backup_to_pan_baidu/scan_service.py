@@ -208,6 +208,7 @@ class ScanService:
             'fail': [],
             'target_path_not_exist': []
         }
+        self.service_orm_items = [ScanRecords]
 
     def start(self):
         self.status = ServiceStatus.START

@@ -2,21 +2,8 @@
 from src.simple_object_backup_to_pan_baidu.service_manager import ServiceManager
 from src.simple_object_backup_to_pan_baidu.hash_service import HashService
 from src.simple_object_backup_to_pan_baidu.scan_service import ScanService
-from src.simple_object_backup_to_pan_baidu.utils import reset_service_status_table
+from src.simple_object_backup_to_pan_baidu.utils.test_utils import reset_all_records
 
-def reset_service_status_table_local():
-    from src.simple_object_backup_to_pan_baidu.db_service import DbService
-    db_service = DbService()
-    engine = db_service.get_engine()
-    print("reset service status table")
-    reset_service_status_table(engine)
-    print("reset scan service record")
-
-def reset_scan_service_record():
-    print("reset scan service record")
-    scan_service = ScanService()
-    scan_service.reset_scan_service_record()
-    print("reset scan service record finished")
 
 def simpe_case(service_register_factory:dict):
     print("simpe case")
@@ -38,9 +25,8 @@ def simpe_case(service_register_factory:dict):
     # print("logger shutdown")
 
 if __name__ == "__main__":
-    # reset_service_status_table_local()
-    # reset_scan_service_record()
+    reset_all_records()
     simpe_case({
-        # "scan_service": ScanService,
+        "scan_service": ScanService,
         'hash_service': HashService
     })

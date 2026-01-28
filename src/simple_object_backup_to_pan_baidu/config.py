@@ -119,7 +119,7 @@ class Config(BaseModel):
 
     # hash计算 配置项
     directory_overcount:int = 200
-    oversize:int = 20 * 1024 * 1024 # 20MB
+    oversize:int = 20 * 1024 * 1024 * 1024 # 20GB
     hash_chunk_size_bytes: int = Field(default=500 * 1024 * 1024, description="哈希计算分片大小（字节）") # 哈希计算分片大小（字节）
     algorithm_list: list[str] = Field(default=['md5', 'sha1', 'sha256'], description="哈希算法列表") # 哈希算法列表
 

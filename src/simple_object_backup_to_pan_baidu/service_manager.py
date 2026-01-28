@@ -2,6 +2,8 @@ import time
 from threading import Thread,Lock
 from .domain import ServiceBase,ServiceStatus
 from .logger_service import LoggerService
+from .utils import ServiceStatusTable,ErrorTable,ManualReviewRecords
+from .db_service import DbService
 import logging
 
 
@@ -9,20 +11,30 @@ class ServiceManager(object):
     def __init__(self):
         self.logger_service = LoggerService()
         self.logger_service.start()
+        self.db_service = DbService()
         self.services = {}
         self.lock = Lock()
         self.running_services = []
         self.service_started = False
         self.threads = {}
         self.logger = logging.getLogger("manager.service_manager")
+        self.service_orm_items = [ServiceStatusTable, ErrorTable, ManualReviewRecords]
     
     def register_service(self,service_name:str,service:ServiceBase):
         self.logger.debug(f"register service:{service_name}")
         self.services[service_name] = service
-    
+        self.service_orm_items.extend(service.service_orm_items)
+
+    def create_table(self):
+        """创建数据库表"""
+        self.logger.debug("create table")
+        engine = self.db_service.get_engine()
+        for orm in self.service_orm_items:
+            orm.metadata.create_all(engine)
     def start_all_service(self):
         """启动所有服务（非阻塞）"""
         with self.lock:
+            self.create_table()
             for name, service in self.services.items():
                 try:
                     self.logger.debug(f"start service:{name}")                   

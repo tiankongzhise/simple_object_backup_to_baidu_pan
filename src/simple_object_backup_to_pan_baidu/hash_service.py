@@ -5,7 +5,7 @@ from sqlalchemy import Engine, BigInteger, String, Integer, UniqueConstraint, Me
 from sqlalchemy import exc
 
 from pathlib import Path
-from typing import Literal,Union
+from typing import Literal, Type
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import logging
 import platform
@@ -13,7 +13,7 @@ import time
 
 from .domain import ServiceStatus
 from .utils import retry_for_class_method, get_service_table,get_auxiliary_table, get_auxiliary_format,logger_configurer
-from .utils import ManualReviewFormat, ServiceStatusTable,DbMixin
+from .utils import ManualReviewFormat, ServiceStatusTable,DbMixin,ManualReviewRecords
 from .db_service import DbService
 from .logger_service import get_logger_queue
 from .config import get_config
@@ -55,7 +55,7 @@ class _Base(DeclarativeBase):
 
 
 class HashRecords(DbMixin, _Base):
-    __tablename__ = "scan_records"
+    __tablename__ = "hash_records"
     host_name: Mapped[str] = mapped_column(String(255))
     object_path: Mapped[str] = mapped_column(String(255))
     object_name: Mapped[str] = mapped_column(String(255))
@@ -89,13 +89,12 @@ def db_connect_retry(
 
 
 class _ServiceRepository:
-    def __init__(self, service_name: str, engine: Engine | None = None, dependent_service_name: list[str]|None = None):
+    def __init__(self, service_name: str, engine: Engine | None = None, dependent_service_name: list[str]|None = None,relative_orm:list[Type[DeclarativeBase]]|None = None):
         self.engine = engine or DbService().get_engine()
         self.logger = logging.getLogger(f'service.{service_name}.repository')
         self.host_name = platform.node()
         self.service_name = service_name
-        self.dependent_service_name = dependent_service_name or []
-
+        self.dependent_service_name = dependent_service_name or ['scan_service']
     @db_connect_retry()
     def add_hash_record(self, data: _FormatData):
         with Session(self.engine) as session:
@@ -143,6 +142,14 @@ class _ServiceRepository:
 
     @db_connect_retry()
     def set_scan_record_status(self, id: int, status: Literal['waiting', 'processing', 'fail', 'done']):
+        '''
+            Set the status of a scan record
+        args:
+            id: int, the id of the scan record
+            status: Literal['waiting', 'processing', 'fail', 'done'], the status to set
+        return:
+            None
+        '''
         table = get_service_table('scan_service')
         with Session(self.engine) as session:
             session.query(table).filter(table.id == id).update({table.status: status})
@@ -179,10 +186,24 @@ class _ServiceRepository:
                 self.logger.warning(f"Hash record for {format_data.object_path},scan_id:{format_data.scan_id} compare failed,db:{getattr(hash_record, key)} vs format_data:{value}")
                 is_equal = False
         return is_equal
+    def set_hash_service_status(self, status: bool):
+        with Session(self.engine) as session:
+            record = session.query(ServiceStatusTable).filter(
+                ServiceStatusTable.service_name == self.service_name
+            ).first()
+            if not record:
+                record = ServiceStatusTable(service_name=self.service_name, is_finished=status)
+                session.add(record)
+            else:
+                record.is_finished = status
+            session.commit()
+
+
 class HashCalculator:
     def __init__(self,logger:logging.Logger):
         self.logger = logger
         self.error_count = 0
+        
     
     def fetch_hash_settings(self):
         temp_config = get_config()
@@ -192,6 +213,7 @@ class HashCalculator:
         self.directory_overcount = temp_config.directory_overcount
 
     def run(self, scan_record: ScanRecords):
+        self.fetch_hash_settings()
         check_result = self.pre_check(scan_record)
         if check_result:
             return check_result
@@ -297,9 +319,8 @@ class HashCalculator:
 
 class HashService:
     def __init__(self, service_name: str = 'hash_service', engine: Engine | None = None, dependent_service_name: list[str]|None = None):
-
         self.dependent_service_name = dependent_service_name or ['scan_service']
-        self.repository = _ServiceRepository(service_name, engine, dependent_service_name)
+        self.repository = _ServiceRepository(service_name, engine, self.dependent_service_name)
         self.logger = logging.getLogger(f'service.{service_name}')
         self.service_name = service_name
         self.engine = engine or DbService().get_engine()
@@ -307,11 +328,13 @@ class HashService:
         logger_queue = get_logger_queue()
         self.executor = ProcessPoolExecutor(4, initializer=logger_configurer, initargs=(logger_queue,))
         self.tasks= []
+        self.service_orm_items = [HashRecords]
 
     def start(self):
         try:
             self.status = ServiceStatus.START
             self.logger.info(f"Starting {self.service_name}...")
+            self.set_hash_service_status(False)
             self.process()
             self.analyze()
             self.stop()
@@ -333,6 +356,7 @@ class HashService:
                     time.sleep(1)
                 else:
                     task = executor.submit(self.worker, self.service_name, record)
+                    self.set_scan_record_status_processing(record.id)
                     task.add_done_callback(self._process_worker_result)
                     self.tasks.append(task)
         self.status = ServiceStatus.PROCESSED
@@ -347,10 +371,12 @@ class HashService:
     def stop(self):
         self.logger.info(f"Stopping {self.service_name}...")
         self.status = ServiceStatus.DONE
+        self.set_hash_service_status(True)
 
     def shutdown(self):
         self.logger.info(f"Shutting down {self.service_name}...")
         self.status = ServiceStatus.FAIL
+        self.set_hash_service_status(True)
 
     def _check_dependent_service_finished(self) -> bool:
         records = self.repository.get_dependent_services_status()
@@ -369,10 +395,12 @@ class HashService:
             case _FormatData():
                 self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...")
                 self.repository.add_hash_record(result)
+                self.set_scan_record_status_done(result.scan_id)
                 self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...done")
             case ManualReviewFormat():
                 self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...")
                 self.repository.add_manual_review_record(result)
+                self.set_scan_record_status_done(result.scan_id)
                 self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...done")
     def analyze(self):
         self.logger.info(f"Analyzing {self.service_name} result...")
@@ -385,3 +413,12 @@ class HashService:
             elif isinstance(result, ManualReviewFormat):
                 manual_review += 1
         self.logger.info(f"{self.service_name} analyze result: success={success}, manual_review={manual_review}")
+
+    def set_hash_service_status(self, status: bool):
+        self.repository.set_hash_service_status(status)
+    def set_scan_record_status_processing(self, scan_id: int):
+        self.repository.set_scan_record_status(scan_id, 'processing')
+    def set_scan_record_status_done(self, scan_id: int):
+        self.repository.set_scan_record_status(scan_id, 'done')
+    def set_scan_record_status_fail(self, scan_id: int):
+        self.repository.set_scan_record_status(scan_id, 'fail')

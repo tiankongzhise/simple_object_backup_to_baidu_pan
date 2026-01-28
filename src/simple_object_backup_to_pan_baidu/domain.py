@@ -1,5 +1,6 @@
-from typing import Protocol
+from typing import Protocol, Type
 from dataclasses import dataclass
+from sqlalchemy.orm import DeclarativeBase
 
 @dataclass
 class ServiceStatus:
@@ -13,6 +14,7 @@ class ServiceStatus:
     FAIL = 8
 
 class ServiceBase(Protocol):
+    service_orm_items: list[Type[DeclarativeBase]]
     def start(self):
         pass
     def process(self):
