@@ -12,13 +12,13 @@ import platform
 from .utils import DbMixin, retry_for_class_method, ServiceStatusTable, get_service_table, get_auxiliary_table, get_auxiliary_format
 from .db_service import DbService
 
-class ScanServiceError(Exception):
+class ?ServiceError(Exception):
     """Scan Service Error"""
 
-class ScanServiceDbError(ScanServiceError):
+class ?ServiceDbError(?ServiceError):
     """Scan Service Db Error"""
 
-class ScanServiceFileError(ScanServiceError):
+class ?ServiceFileError(?ServiceError):
     """Scan Service File Error"""
 
 
@@ -38,7 +38,7 @@ class _Base(DeclarativeBase):
     metadata = MetaData()
 
 
-class ScanRecords(DbMixin, _Base):
+class ?Records(DbMixin, _Base):
     __tablename__ = "scan_records"
     host_name: Mapped[str] = mapped_column(String(255))
     object_path: Mapped[str] = mapped_column(String(255))
@@ -56,7 +56,7 @@ def db_connect_retry(
     backoff:float = 1.0,
     exceptions:tuple[type[Exception]] = (exc.OperationalError,),
     logger_attr: str = "logger",
-    raise_exception:type[Exception] = ScanServiceDbError,
+    raise_exception:type[Exception] = ?ServiceDbError,
 ):
     return retry_for_class_method(retries=retries, delay=delay, backoff=backoff, exceptions=exceptions, logger_attr=logger_attr, raise_exception=raise_exception)
 
@@ -74,7 +74,7 @@ class _ServiceRepository:
     @db_connect_retry()
     def add_scan_record(self, data: _FormatData):
         with Session(self.engine) as session:
-            session.add(ScanRecords(**data.model_dump()))
+            session.add(?Records(**data.model_dump()))
             session.commit()
 
     @db_connect_retry()
@@ -90,3 +90,37 @@ class _ServiceRepository:
                 ScanRecords.object_path == object_path
             ).first()
 
+
+class ?Service:
+    def __init__(self, service_name: str, engine: Engine | None = None, dependent_service_name: list[str]|None = None):
+        self.service_orm_items = [?orm_items]
+        self.dependent_service_name = dependent_service_name or [?dependent_service_name]
+        self.service_name = service_name
+        self.logger = logging.getLogger(f'service.{self.service_name}')
+        self.engine = engine or DbService().get_engine()
+        self.repository = ?Repository(self.service_name, self.engine, self.dependent_service_name)
+        self.executor = ?
+        self.logger_queue = ?
+        self.status = ?
+    
+    def start(self):
+        ...
+    
+    def process(self):
+        ...
+    
+    def stop(self):
+        ...
+    
+    def shutdown(self):
+        ...
+    
+    def set_service_finish_status(self, status: bool):
+        ...
+    
+    def set_dependent_service_record_status(self, status: Literal['waiting','processing','fail','done']):
+        ...
+    
+    @staticmethod
+    def worker():
+        ...

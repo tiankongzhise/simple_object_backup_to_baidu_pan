@@ -1,3 +1,6 @@
 {
-    "python.languageServer": "None"
+    "python.languageServer": "None",
+    "python.analysis.exclude": [
+        "**/*_tempelte.py",        // 忽略匹配模式的文件
+    ],
 }

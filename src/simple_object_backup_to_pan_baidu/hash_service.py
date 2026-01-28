@@ -48,7 +48,7 @@ class _FormatData(BaseModel):
     def validate_object_path(cls, v):
         if not Path(v).exists():
             raise ValueError(f"Object path {v} not exist,in hash service ,this case should not be happened")
-
+        return v
 
 class _Base(DeclarativeBase):
     metadata = MetaData()
@@ -391,17 +391,22 @@ class HashService:
 
     def _process_worker_result(self,task_future):
         result = task_future.result()
-        match result:
-            case _FormatData():
-                self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...")
-                self.repository.add_hash_record(result)
-                self.set_scan_record_status_done(result.scan_id)
-                self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...done")
-            case ManualReviewFormat():
-                self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...")
-                self.repository.add_manual_review_record(result)
-                self.set_scan_record_status_done(result.scan_id)
-                self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...done")
+        try:
+            match result:
+                case _FormatData():
+                    self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...")
+                    self.repository.add_hash_record(result)
+                    self.set_scan_record_status_done(result.scan_id)
+                    self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Hash Records...done")
+                case ManualReviewFormat():
+                    self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...")
+                    self.repository.add_manual_review_record(result)
+                    self.set_scan_record_status_done(result.scan_id)
+                    self.logger.info(f"{self.service_name} processing worker result:{result.scan_id}_{result.object_name} to Manual Review...done")
+        except Exception as e:
+            self.logger.error(f"Error occurred in {self.service_name} callback: {e},task_result:{result}")
+            import os
+            os._exit(1)
     def analyze(self):
         self.logger.info(f"Analyzing {self.service_name} result...")
         success = 0
