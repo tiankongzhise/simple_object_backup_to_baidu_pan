@@ -296,12 +296,13 @@ class HashCalculator:
         )
 
 class HashService:
-    def __init__(self, service_name: str = 'hash_service', engine: Engine | None = None):
-        self.repository = _ServiceRepository(service_name, engine)
+    def __init__(self, service_name: str = 'hash_service', engine: Engine | None = None, dependent_service_name: list[str]|None = None):
+
+        self.dependent_service_name = dependent_service_name or ['scan_service']
+        self.repository = _ServiceRepository(service_name, engine, dependent_service_name)
         self.logger = logging.getLogger(f'service.{service_name}')
         self.service_name = service_name
         self.engine = engine or DbService().get_engine()
-        self.dependent_service_name = ['scan_service']
         self.status = ServiceStatus.INIT
         logger_queue = get_logger_queue()
         self.executor = ProcessPoolExecutor(4, initializer=logger_configurer, initargs=(logger_queue,))
@@ -352,7 +353,7 @@ class HashService:
         self.status = ServiceStatus.FAIL
 
     def _check_dependent_service_finished(self) -> bool:
-        records = self.repository.get_dependent_services_status(self.dependent_service_name)
+        records = self.repository.get_dependent_services_status()
         if not records:
             raise HashServiceError(f"Dependent service not found: {self.dependent_service_name}")
         for record in records:
