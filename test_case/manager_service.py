@@ -1,6 +1,6 @@
 
 from src.simple_object_backup_to_pan_baidu.service_manager import ServiceManager
-from src.simple_object_backup_to_pan_baidu.logger_service import LoggerService
+from src.simple_object_backup_to_pan_baidu.hash_service import HashService
 from src.simple_object_backup_to_pan_baidu.scan_service import ScanService
 from src.simple_object_backup_to_pan_baidu.utils import reset_service_status_table
 
@@ -38,8 +38,9 @@ def simpe_case(service_register_factory:dict):
     # print("logger shutdown")
 
 if __name__ == "__main__":
-    reset_service_status_table_local()
-    reset_scan_service_record()
+    # reset_service_status_table_local()
+    # reset_scan_service_record()
     simpe_case({
-        "scan_service": ScanService
+        # "scan_service": ScanService,
+        'hash_service': HashService
     })

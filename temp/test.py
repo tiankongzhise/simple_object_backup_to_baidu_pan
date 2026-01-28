@@ -1,1 +1,1 @@
-from src.simple_object_backup_to_pan_baidu.scan_service import ScanService
+from src.simple_object_backup_to_pan_baidu.hash_service import HashService

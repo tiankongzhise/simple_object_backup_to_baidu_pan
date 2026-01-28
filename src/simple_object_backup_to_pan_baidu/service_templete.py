@@ -9,7 +9,7 @@ from functools import wraps
 import logging
 import platform
 
-from .utils import DbMixin, retry_for_class_method
+from .utils import DbMixin, retry_for_class_method, ServiceStatusTable, get_service_table, get_auxiliary_table, get_auxiliary_format
 from .db_service import DbService
 
 class ScanServiceError(Exception):
@@ -64,11 +64,12 @@ def db_connect_retry(
 
 
 class _ServiceRepository:
-    def __init__(self, service_name: str, engine: Engine | None = None):
+    def __init__(self, service_name: str, engine: Engine | None = None, dependent_service_name: list[str]|None = None):
         self.engine = engine or DbService().get_engine()
         self.logger = logging.getLogger(f'service.{service_name}.repository')
         self.host_name = platform.node()
         self.service_name = service_name
+        self.dependent_service_name = dependent_service_name or []
 
     @db_connect_retry()
     def add_scan_record(self, data: _FormatData):

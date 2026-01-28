@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,field_validator
 from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped, Session
 from sqlalchemy import Engine, BigInteger, String, Integer, UniqueConstraint, MetaData, JSON
 from sqlalchemy import exc
@@ -30,7 +30,7 @@ class ScanServiceFileError(ScanServiceError):
 class _FormatData(BaseModel):
     """Scan format data for a single object"""
     host_name: str
-    object_path: Path
+    object_path: str
     object_name: str
     object_type: Literal["file", "directory"]
     object_size: int
@@ -38,6 +38,11 @@ class _FormatData(BaseModel):
     object_items: dict[str, int]
     status: Literal['waiting','processing','fail','done'] = 'waiting'
 
+    @field_validator('object_path')
+    def validate_object_path(cls, v):
+        if not Path(v).exists():
+            raise ValueError(f"Scan service Object path {v} not exist, please check")
+        return v
 
 class _Base(DeclarativeBase):
     metadata = MetaData()
@@ -48,7 +53,7 @@ class ScanRecords(DbMixin, _Base):
     host_name: Mapped[str] = mapped_column(String(255))
     object_path: Mapped[str] = mapped_column(String(255))
     object_name: Mapped[str] = mapped_column(String(255))
-    object_type: Mapped[str] = mapped_column(String(15))
+    object_type: Mapped[Literal["file", "directory"]] = mapped_column(String(15))
     object_size: Mapped[int] = mapped_column(BigInteger)
     object_item_count: Mapped[int] = mapped_column(Integer)
     object_items: Mapped[dict] = mapped_column(JSON)
@@ -137,10 +142,11 @@ class _ServiceRepository:
 def _scan_file(file_path: Path, relative_path: Path, host_name: str, logger:logging.Logger) -> _FormatData:
     """Scan a single file and return its scan result"""
     items_path = file_path.relative_to(relative_path).as_posix()
+    str_file_path = file_path.resolve().as_posix()
     logger.debug(f"Scanning file: {file_path}")
     return _FormatData(
         host_name=host_name,
-        object_path=file_path,
+        object_path=str_file_path,
         object_name=file_path.name,
         object_type="file",
         object_size=file_path.stat().st_size,
@@ -154,7 +160,7 @@ def _scan_directory(directory_path: Path, relative_path: Path, host_name: str, l
     object_item_count = 0
     object_items = {}
     object_size = 0
-
+    directory_path_str =directory_path.resolve().as_posix()
     for item in directory_path.rglob("*"):
         if item.is_file():
             item_path = item.relative_to(relative_path).as_posix()
@@ -164,7 +170,7 @@ def _scan_directory(directory_path: Path, relative_path: Path, host_name: str, l
 
     return _FormatData(
         host_name=host_name,
-        object_path=directory_path,
+        object_path=directory_path_str,
         object_name=directory_path.name,
         object_type="directory",
         object_size=object_size,
@@ -292,7 +298,7 @@ class ScanService:
             if not self._compare_scan_data(record, result):
                 self.logger.critical(f"Scan data mismatch: {record} {result}")
                 return False
-            self.logger.debug(f"scan record matched: {record}")
+            self.logger.info(f"scan record matched: scan_id:{record.id}-object_name:{record.object_name}")
             return True
         else:
             self.repository.add_scan_record(result['result'])
