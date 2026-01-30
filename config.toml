@@ -23,11 +23,14 @@ zipped_suffix = [
     ".bz2",
 ] # 压缩文件后缀列表
 
-# 文件压缩 配置项
-compress_temp_dir = './temp_compress' # 备份临时目录
-password = 'None' # 压缩密码
+# 压缩服务 配置项
+compress_temp_dir = 'D:\backup_compress' # 备份临时目录
+password = 'H_x123456789' # 压缩密码
 compress_level = 0 # 压缩格式
-extract_temp_dir = './temp_extract' # 解压临时目录
+compress_desk_size = '40 * 1024 * 1024 * 1024' #40GB
+
+# 验证服务配置项
+extract_temp_dir = 'D:\backup_extract' # 解压临时目录
 
 
 # 文件上传配置

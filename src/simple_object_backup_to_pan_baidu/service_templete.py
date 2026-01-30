@@ -72,18 +72,18 @@ class _ServiceRepository:
         self.dependent_service_name = dependent_service_name or []
 
     @db_connect_retry()
-    def add_scan_record(self, data: _FormatData):
+    def add_?_record(self, data: _FormatData):
         with Session(self.engine) as session:
             session.add(?Records(**data.model_dump()))
             session.commit()
 
     @db_connect_retry()
-    def get_scan_record_by_id(self, id: int):
+    def get_?_record_by_id(self, id: int):
         with Session(self.engine) as session:
             return session.get(ScanRecords, id)
 
     @db_connect_retry()
-    def get_scan_record_by_unique(self, host_name: str, object_path: str):
+    def get_?_record_by_unique(self, host_name: str, object_path: str):
         with Session(self.engine) as session:
             return session.query(ScanRecords).filter(
                 ScanRecords.host_name == host_name,
@@ -124,3 +124,19 @@ class ?Service:
     @staticmethod
     def worker():
         ...
+
+    def check_dependent_service_finished(self) -> bool:
+        ...
+
+    def get_next_waiting_record(self):
+        ...
+    
+
+class ?ServiceUtils:
+    def campare_item(self, a, b):
+        ...
+    def trans_records_to_format_data(self, records):
+        ...
+    def trans_format_data_to_records(self, format_data):
+        ...
+    

@@ -6,7 +6,7 @@ from .models import  DbMixin
 from .models import ManualReviewRecords, ManualReviewFormat
 from .models import ServiceStatusTable, ServiceStatusFormat
 from .models import ErrorTable, ErrorFormat
-from .models import ServiceStatusTable,ServiceStatusFormat
+from .models import ManReviewRecords,ManReviewFormat
 from .exception import RetryError
 from .logger_utils import logger_configurer
 
@@ -22,6 +22,8 @@ __all__ = [
     "ErrorTable",
     "ManualReviewRecords",
     "ManualReviewFormat",
+    "ManReviewRecords",
+    "ManReviewFormat",
     "ServiceStatusFormat",
     "ErrorFormat",
     "RetryError",

@@ -35,9 +35,12 @@ def _load_toml(toml_path:str):
     for key,value in toml_data.items():
         if key not in Config.model_fields:
             raise ConfigInitError(f"Config key {key} not defined")
-        if key == 'chunk_size_bytes':
+        if 'size' in key:
             if isinstance(value, str):
                 result[key] = eval(value, {'__builtins__': None}, {})
+                continue
+            else:
+                result[key] = value
                 continue
         if isinstance(value, str):
             if value == 'true':
@@ -122,19 +125,22 @@ class Config(BaseModel):
     oversize:int = 20 * 1024 * 1024 * 1024 # 20GB
     hash_chunk_size_bytes: int = Field(default=500 * 1024 * 1024, description="哈希计算分片大小（字节）") # 哈希计算分片大小（字节）
     algorithm_list: list[str] = Field(default=['md5', 'sha1', 'sha256'], description="哈希算法列表") # 哈希算法列表
+    fingerprint_check_size: int = Field(default=4 * 1024, description="指纹检查大小（字节）") # 指纹检查大小（字节）
+    fingerprint_check_algorithm: str = Field(default='sha256', description="指纹检查算法") # 指纹检查算法
 
 
-    # 文件压缩 配置项
+    # 文件压缩服务 配置项
     compress_temp_dir: str = Field(default='./temp_compress', description="备份临时目录") # 备份临时目录
     password: str|None = Field(default=None, description="压缩密码") # 压缩密码
     compress_level: int = Field(default=0, description="压缩格式") # 压缩格式
-    extract_temp_dir: str = Field(default='./temp_extract', description="解压临时目录") # 解压临时目录
+    compress_desk_size:int = 4 * 1024 * 1024 * 1024
     salt:dict[int, bytes] = Field(default={
         8: b"\xaa%\xec\xec[\x94\xbex",
         12: b"}y\xd5\x19A\xa2\xf6\x1b\xce\x86\x7f\x85",
         16: b"\xd1\x12_\xd7\xd7\n\x92\xfdC\x84\re\xcdxD\x0b",
     }, description="压缩使用定制化盐值,但是固定,不会随机生成,使得压缩后文件hash稳定")
 
+    extract_temp_dir: str = Field(default='./temp_extract', description="解压临时目录") # 解压临时目录
     # 文件上传配置
     chunk_size_bytes: int = Field(default=20*1024*1024, description="分片大小（字节）") # 分片大小（字节）
     retry_times: int = Field(default=5, description="上传失败重试次数") # 上传失败重试次数

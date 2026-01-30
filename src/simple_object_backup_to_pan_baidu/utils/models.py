@@ -85,3 +85,29 @@ class ManualReviewFormat(BaseModel):
     scan_id: int
     reason: str
     status: Literal['waiting', 'processing', 'fail', 'done'] = 'waiting'
+
+
+class ManReviewRecords(DbMixin, ManualReviewBase):
+    __tablename__ = "man_review_records"
+    host_name: Mapped[str] = mapped_column(String(255))
+    object_path: Mapped[str] = mapped_column(String(255))
+    object_name: Mapped[str] = mapped_column(String(255))
+    object_type: Mapped[str] = mapped_column(String(15))
+    object_size: Mapped[int] = mapped_column(BigInteger)
+    object_item_count: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(255))
+    status: Mapped[Literal['waiting', 'processing', 'fail', 'done']
+                   ] = mapped_column(String(15), default='waiting')
+
+    __table_args__ = (
+        UniqueConstraint('host_name', 'object_path', name='uix_host_name_object_path'),
+    )
+class ManReviewFormat(BaseModel):
+    host_name: str
+    object_path: str
+    object_name: str
+    object_type: str
+    object_size: int
+    object_item_count: int
+    reason: str
+    status: Literal['waiting', 'processing', 'fail', 'done'] = 'waiting'
